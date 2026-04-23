@@ -13,7 +13,15 @@ use crate::{
     },
 };
 use futures_util::{stream, stream::StreamExt};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::{cell::RefCell, collections::HashMap, time::Duration};
+use temporalio_common::protos::temporal::api::{
+    namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+    workflowservice::v1::DescribeNamespaceResponse,
+};
 use temporalio_common::{
     protos::{
         canned_histories,
@@ -51,6 +59,7 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
+use tokio::sync::Notify;
 use tokio::sync::{Barrier, watch};
 use uuid::Uuid;
 
@@ -1215,16 +1224,6 @@ async fn nexus_start_operation_failure_converts_to_legacy_for_old_server(
 /// polls to drain, but the server was never told to flush them.
 #[tokio::test]
 async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-    use temporalio_common::protos::temporal::api::{
-        namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
-        workflowservice::v1::DescribeNamespaceResponse,
-    };
-    use tokio::sync::Notify;
-
     let shutdown_rpc_called = Arc::new(AtomicBool::new(false));
     let shutdown_rpc_called_clone = shutdown_rpc_called.clone();
     // When the shutdown_worker RPC fires, it signals polls to complete (simulating server
