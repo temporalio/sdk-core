@@ -33,7 +33,7 @@ pub trait FailureConverter {
         error: OutgoingError,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError>;
+    ) -> Failure;
 
     /// Convert a Temporal failure protobuf back into a Rust error.
     fn to_error(
@@ -110,11 +110,16 @@ impl FailureDecodeHint for ChildWorkflowStartDecodeHint {
             IncomingError::Cancelled(cancelled) => {
                 ChildWorkflowStartError::Cancelled(Box::new(cancelled))
             }
-            other => ChildWorkflowStartError::Cancelled(Box::new(CancelledError::new(
-                other.into_failure(),
-                CanceledFailureInfo::default(),
-                None,
-            ))),
+            other => {
+                let payload_converter = PayloadConverter::default();
+                ChildWorkflowStartError::Cancelled(Box::new(CancelledError::new(
+                    other.into_failure(),
+                    CanceledFailureInfo::default(),
+                    None,
+                    &payload_converter,
+                    &SerializationContextData::None,
+                )))
+            }
         }
     }
 }
@@ -149,7 +154,10 @@ impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
 
     fn adapt(self, normalized: IncomingError) -> Self::Output {
         let failure = normalized.failure().clone();
-        let cause = failure.cause.clone().map(|cause| decode_failure(*cause));
+        let payload_converter = PayloadConverter::default();
+        let cause = failure.cause.clone().map(|cause| {
+            decode_failure(*cause, &payload_converter, &SerializationContextData::None)
+        });
         ChildWorkflowSignalError::Failed(Box::new(ChildWorkflowSignalFailureError::new(
             failure, normalized, cause,
         )))
@@ -160,42 +168,55 @@ impl FailureConverter for DefaultFailureConverter {
     fn to_failure(
         &self,
         error: OutgoingError,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
-        Ok(match error {
-            OutgoingError::Activity(activity) => encode_outgoing_activity_error(activity),
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Failure {
+        let original_error = error.to_string();
+        let encoded = match error {
+            OutgoingError::Activity(activity) => {
+                encode_outgoing_activity_error(activity, payload_converter, context)
+            }
             OutgoingError::Workflow(OutgoingWorkflowError::Application(app)) => {
-                app.encode_failure()
+                app.encode_failure(payload_converter, context)
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ActivityExecution(activity)) => {
-                activity.encode_failure()
+                activity.encode_failure(payload_converter, context)
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowExecution(child)) => {
-                child.encode_failure()
+                child.encode_failure(payload_converter, context)
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowStart(child)) => {
-                child.encode_failure()
+                child.encode_failure(payload_converter, context)
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowSignal(signal)) => {
-                signal.encode_failure()
+                signal.encode_failure(payload_converter, context)
             }
+        };
+        encoded.unwrap_or_else(|converter_error| {
+            Failure::application_failure(
+                failed_error_conversion_message(&original_error, &converter_error),
+                false,
+            )
         })
     }
 
     fn to_error(
         &self,
         failure: Failure,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
     ) -> Result<IncomingError, PayloadConversionError> {
-        Ok(decode_failure(failure))
+        Ok(decode_failure(failure, payload_converter, context))
     }
 }
 
 /// Trait for expressing that a type has a known conversion to a Failure proto
 trait EncodeFailure {
-    fn encode_failure(&self) -> Failure;
+    fn encode_failure(
+        &self,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError>;
 }
 
 enum ClassifiedFailure<'a> {
@@ -205,6 +226,16 @@ enum ClassifiedFailure<'a> {
     ChildWorkflowStart(&'a ChildWorkflowStartError),
     ChildWorkflowSignal(&'a ChildWorkflowSignalError),
     Generic(&'a (dyn std::error::Error + 'static)),
+}
+
+fn failed_error_conversion_message(
+    original_error: impl std::fmt::Display,
+    converter_error: &PayloadConversionError,
+) -> String {
+    format!(
+        "Failed converting error to failure: {converter_error}, original error message: \
+         {original_error}"
+    )
 }
 
 impl<'a> ClassifiedFailure<'a> {
@@ -226,32 +257,75 @@ impl<'a> ClassifiedFailure<'a> {
 
     fn encode(self) -> Failure {
         match self {
-            Self::Application(app) => app.encode_failure(),
-            Self::ActivityExecution(activity) => activity.encode_failure(),
-            Self::ChildWorkflowExecution(child) => child.encode_failure(),
-            Self::ChildWorkflowStart(child) => child.encode_failure(),
-            Self::ChildWorkflowSignal(signal) => signal.encode_failure(),
+            Self::Application(app) => app
+                .encode_failure(
+                    &PayloadConverter::default(),
+                    &SerializationContextData::None,
+                )
+                .unwrap_or_else(|converter_error| {
+                    encode_failed_error_conversion(app, converter_error)
+                }),
+            Self::ActivityExecution(activity) => activity
+                .encode_failure(
+                    &PayloadConverter::default(),
+                    &SerializationContextData::None,
+                )
+                .unwrap_or_else(|converter_error| {
+                    encode_failed_error_conversion(activity, converter_error)
+                }),
+            Self::ChildWorkflowExecution(child) => child
+                .encode_failure(
+                    &PayloadConverter::default(),
+                    &SerializationContextData::None,
+                )
+                .unwrap_or_else(|converter_error| {
+                    encode_failed_error_conversion(child, converter_error)
+                }),
+            Self::ChildWorkflowStart(child) => child
+                .encode_failure(
+                    &PayloadConverter::default(),
+                    &SerializationContextData::None,
+                )
+                .unwrap_or_else(|converter_error| {
+                    encode_failed_error_conversion(child, converter_error)
+                }),
+            Self::ChildWorkflowSignal(signal) => signal
+                .encode_failure(
+                    &PayloadConverter::default(),
+                    &SerializationContextData::None,
+                )
+                .unwrap_or_else(|converter_error| {
+                    encode_failed_error_conversion(signal, converter_error)
+                }),
             Self::Generic(err) => encode_generic_application_failure(err),
         }
     }
 }
 
 impl EncodeFailure for ApplicationFailure {
-    fn encode_failure(&self) -> Failure {
-        Failure {
+    fn encode_failure(
+        &self,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        let details = self
+            .failure_payloads()
+            .map(|details| details.encode(payload_converter, context))
+            .transpose()?;
+        Ok(Failure {
             message: self.to_string(),
             cause: encode_application_failure_cause(self.source_error().as_ref()),
             failure_info: Some(FailureInfo::ApplicationFailureInfo(
                 ApplicationFailureInfo {
                     r#type: self.type_name().unwrap_or_default().to_owned(),
                     non_retryable: self.is_non_retryable(),
-                    details: self.details().cloned(),
+                    details,
                     next_retry_delay: self.next_retry_delay().and_then(|d| d.try_into().ok()),
                     category: self.category() as i32,
                 },
             )),
             ..Default::default()
-        }
+        })
     }
 }
 
@@ -273,47 +347,69 @@ fn encode_error_as_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
 }
 
 impl EncodeFailure for ActivityExecutionError {
-    fn encode_failure(&self) -> Failure {
-        match self {
+    fn encode_failure(
+        &self,
+        _: &PayloadConverter,
+        _: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        Ok(match self {
             Self::Failed(failure) => failure.failure().clone(),
             Self::Cancelled(failure) => failure.failure().clone(),
             Self::Serialization(err) => encode_generic_application_failure(err),
-        }
+        })
     }
 }
 
 impl EncodeFailure for ChildWorkflowExecutionError {
-    fn encode_failure(&self) -> Failure {
-        match self {
+    fn encode_failure(
+        &self,
+        _: &PayloadConverter,
+        _: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        Ok(match self {
             Self::Failed(failure) => failure.failure().clone(),
             Self::Serialization(_) => encode_generic_application_failure(self),
-        }
+        })
     }
 }
 
 impl EncodeFailure for ChildWorkflowStartError {
-    fn encode_failure(&self) -> Failure {
-        match self {
+    fn encode_failure(
+        &self,
+        _: &PayloadConverter,
+        _: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        Ok(match self {
             Self::Cancelled(failure) => failure.failure().clone(),
             Self::StartFailed { .. } | Self::Serialization(_) => {
                 encode_generic_application_failure(self)
             }
-        }
+        })
     }
 }
 
 impl EncodeFailure for ChildWorkflowSignalError {
-    fn encode_failure(&self) -> Failure {
-        match self {
+    fn encode_failure(
+        &self,
+        _: &PayloadConverter,
+        _: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        Ok(match self {
             Self::Failed(failure) => failure.failure().clone(),
             Self::Serialization(err) => encode_generic_application_failure(err),
-        }
+        })
     }
 }
 
-fn encode_outgoing_activity_error(err: OutgoingActivityError) -> Failure {
-    match err {
-        OutgoingActivityError::Application(app) => app.encode_failure(),
+fn encode_outgoing_activity_error(
+    err: OutgoingActivityError,
+    payload_converter: &PayloadConverter,
+    context: &SerializationContextData,
+) -> Result<Failure, PayloadConversionError> {
+    Ok(match err {
+        OutgoingActivityError::Application(app) => {
+            app.encode_failure(payload_converter, context)?
+        }
         OutgoingActivityError::Cancelled { details } => Failure {
             message: "Activity cancelled".to_string(),
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
@@ -321,7 +417,7 @@ fn encode_outgoing_activity_error(err: OutgoingActivityError) -> Failure {
             })),
             ..Default::default()
         },
-    }
+    })
 }
 
 fn encode_generic_application_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
@@ -335,18 +431,39 @@ fn encode_generic_application_failure(err: &(dyn std::error::Error + 'static)) -
     }
 }
 
-fn decode_failure(failure: Failure) -> IncomingError {
-    let cause = failure.cause.clone().map(|cause| decode_failure(*cause));
+fn encode_failed_error_conversion(
+    err: &(dyn std::error::Error + 'static),
+    converter_error: PayloadConversionError,
+) -> Failure {
+    Failure {
+        message: failed_error_conversion_message(err, &converter_error),
+        cause: err.source().map(encode_error_as_failure).map(Box::new),
+        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+            ApplicationFailureInfo::default(),
+        )),
+        ..Default::default()
+    }
+}
+
+fn decode_failure(
+    failure: Failure,
+    payload_converter: &PayloadConverter,
+    context: &SerializationContextData,
+) -> IncomingError {
+    let cause = failure
+        .cause
+        .clone()
+        .map(|cause| decode_failure(*cause, payload_converter, context));
     match failure.failure_info.clone() {
-        Some(FailureInfo::ApplicationFailureInfo(_)) | None => {
-            IncomingError::Application(ApplicationFailure::from_failure(failure, cause))
-        }
-        Some(FailureInfo::TimeoutFailureInfo(failure_info)) => {
-            IncomingError::Timeout(TimeoutError::new(failure, failure_info, cause))
-        }
-        Some(FailureInfo::CanceledFailureInfo(failure_info)) => {
-            IncomingError::Cancelled(CancelledError::new(failure, failure_info, cause))
-        }
+        Some(FailureInfo::ApplicationFailureInfo(_)) | None => IncomingError::Application(
+            ApplicationFailure::from_failure(failure, cause, payload_converter, context),
+        ),
+        Some(FailureInfo::TimeoutFailureInfo(failure_info)) => IncomingError::Timeout(
+            TimeoutError::new(failure, failure_info, cause, payload_converter, context),
+        ),
+        Some(FailureInfo::CanceledFailureInfo(failure_info)) => IncomingError::Cancelled(
+            CancelledError::new(failure, failure_info, cause, payload_converter, context),
+        ),
         Some(FailureInfo::TerminatedFailureInfo(_)) => {
             IncomingError::Terminated(TerminatedError::new(failure, cause))
         }
@@ -380,13 +497,16 @@ fn decode_failure(failure: Failure) -> IncomingError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::temporal::api::{
-        common::v1::Payload,
-        enums::v1::ApplicationErrorCategory,
-        failure::v1::{
-            ActivityFailureInfo, ChildWorkflowExecutionFailureInfo, NexusHandlerFailureInfo,
-            NexusOperationFailureInfo, ResetWorkflowFailureInfo, ServerFailureInfo,
-            TerminatedFailureInfo, TimeoutFailureInfo, failure::FailureInfo,
+    use crate::{
+        data_converters::{GenericPayloadConverter, SerializationContext},
+        protos::temporal::api::{
+            common::v1::{Payload, Payloads},
+            enums::v1::ApplicationErrorCategory,
+            failure::v1::{
+                ActivityFailureInfo, ChildWorkflowExecutionFailureInfo, NexusHandlerFailureInfo,
+                NexusOperationFailureInfo, ResetWorkflowFailureInfo, ServerFailureInfo,
+                TerminatedFailureInfo, TimeoutFailureInfo, failure::FailureInfo,
+            },
         },
     };
     use rstest::rstest;
@@ -441,6 +561,14 @@ mod tests {
         }
     }
 
+    struct AlwaysFailsSerialize;
+
+    impl serde::Serialize for AlwaysFailsSerialize {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("serialize boom"))
+        }
+    }
+
     fn assert_incoming_kind(decoded: &IncomingError, expected: IncomingKind) {
         match expected {
             IncomingKind::Application => assert!(matches!(decoded, IncomingError::Application(_))),
@@ -465,13 +593,11 @@ mod tests {
     }
 
     fn convert(err: OutgoingWorkflowError) -> Failure {
-        DefaultFailureConverter
-            .to_failure(
-                OutgoingError::Workflow(err),
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .unwrap()
+        DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(err),
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        )
     }
 
     fn data_converter() -> crate::data_converters::DataConverter {
@@ -509,12 +635,10 @@ mod tests {
                 .type_name("MyType".to_owned())
                 .non_retryable(true)
                 .category(ApplicationErrorCategory::Benign)
-                .details(crate::protos::temporal::api::common::v1::Payloads {
-                    payloads: vec![Payload {
-                        data: b"details".to_vec(),
-                        ..Default::default()
-                    }],
-                })
+                .details(crate::data_converters::RawValue::new(vec![Payload {
+                    data: b"details".to_vec(),
+                    ..Default::default()
+                }]))
                 .build(),
         )));
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
@@ -525,6 +649,104 @@ mod tests {
         assert!(info.non_retryable);
         assert_eq!(info.category(), ApplicationErrorCategory::Benign);
         assert_eq!(info.details.unwrap().payloads[0].data, b"details".to_vec());
+    }
+
+    #[test]
+    fn application_failures_encode_serializable_details_with_payload_converter() {
+        let failure = convert(OutgoingWorkflowError::Application(Box::new(
+            ApplicationFailure::builder(anyhow::anyhow!("app boom"))
+                .details("detail")
+                .build(),
+        )));
+        let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
+            panic!("expected application failure info");
+        };
+        let payloads = info.details.expect("details should be present").payloads;
+        let converter = PayloadConverter::default();
+        let details: String = converter
+            .from_payloads(
+                &SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                },
+                payloads,
+            )
+            .unwrap();
+        assert_eq!(details, "detail");
+    }
+
+    #[test]
+    fn application_failures_surface_detail_encoding_errors_with_original_message() {
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("app boom"))
+                    .details(AlwaysFailsSerialize)
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
+
+        assert_eq!(
+            failure.message,
+            "Failed converting error to failure: Encoding error: serialize boom, original error message: app boom"
+        );
+    }
+
+    #[test]
+    fn application_failures_decode_details_through_payload_converter() {
+        let converter = PayloadConverter::default();
+        let payloads = converter
+            .to_payloads(
+                &SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                },
+                &"detail",
+            )
+            .unwrap();
+        let failure = Failure {
+            message: "app boom".to_owned(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    details: Some(Payloads { payloads }),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(failure, &converter, &SerializationContextData::Workflow)
+            .unwrap();
+
+        let IncomingError::Application(app) = decoded else {
+            panic!("expected application error");
+        };
+        assert_eq!(app.details::<String>().unwrap(), Some("detail".to_string()));
+    }
+
+    #[test]
+    fn nested_application_failures_surface_detail_encoding_errors_in_fallback_failure() {
+        let app = ApplicationFailure::new(anyhow::Error::new(TestError::new(
+            "outer wrapper",
+            Some(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("inner boom"))
+                    .details(AlwaysFailsSerialize)
+                    .build(),
+            )),
+        )));
+
+        let converted = convert(OutgoingWorkflowError::Application(Box::new(app)));
+        let cause = converted.cause.expect("expected nested fallback failure");
+        assert_eq!(
+            cause.message,
+            "Failed converting error to failure: Encoding error: serialize boom, original error message: inner boom"
+        );
+        assert!(matches!(
+            cause.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        ));
     }
 
     #[test]
@@ -961,7 +1183,10 @@ mod tests {
             timeout.timeout_type(),
             crate::protos::temporal::api::enums::v1::TimeoutType::Heartbeat
         );
-        assert_eq!(timeout.last_heartbeat_details(), Some(&heartbeat_details));
+        assert_eq!(
+            timeout.raw_last_heartbeat_details(),
+            Some(heartbeat_details.payloads.as_slice())
+        );
         assert_eq!(timeout.failure(), &failure);
     }
 
@@ -992,7 +1217,7 @@ mod tests {
         let IncomingError::Cancelled(cancelled) = decoded else {
             panic!("expected cancelled error");
         };
-        assert_eq!(cancelled.details(), Some(&details));
+        assert_eq!(cancelled.raw_details(), Some(details.payloads.as_slice()));
         assert_eq!(cancelled.failure(), &failure);
     }
 
@@ -1159,13 +1384,11 @@ mod tests {
 
     #[test]
     fn outgoing_cancelled_activity_errors_encode_to_cancelled_failures() {
-        let failure = DefaultFailureConverter
-            .to_failure(
-                OutgoingError::Activity(OutgoingActivityError::Cancelled { details: None }),
-                &PayloadConverter::default(),
-                &SerializationContextData::Activity,
-            )
-            .unwrap();
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Activity(OutgoingActivityError::Cancelled { details: None }),
+            &PayloadConverter::default(),
+            &SerializationContextData::Activity,
+        );
 
         assert_eq!(failure.message, "Activity cancelled");
         assert!(matches!(

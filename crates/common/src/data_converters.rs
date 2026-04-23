@@ -29,6 +29,7 @@ impl std::fmt::Debug for DataConverter {
             .finish_non_exhaustive()
     }
 }
+
 impl DataConverter {
     /// Create a new DataConverter with the given payload converter, failure converter, and codec.
     pub fn new(
@@ -136,17 +137,8 @@ impl DataConverter {
         context: &SerializationContextData,
         error: crate::error::OutgoingError,
     ) -> crate::protos::temporal::api::failure::v1::Failure {
-        let original_error = error.to_string();
         self.failure_converter
             .to_failure(error, &self.payload_converter, context)
-            .unwrap_or_else(|converter_error| {
-                crate::protos::temporal::api::failure::v1::Failure::application_failure(
-                    format!(
-                        "Failed converting error to failure: {converter_error}, original error message: {original_error}"
-                    ),
-                    false,
-                )
-            })
     }
 
     /// Returns the codec component of this data converter.
@@ -328,6 +320,53 @@ pub trait TemporalDeserializable: Sized {
             return Err(PayloadConversionError::WrongEncoding);
         }
         Self::from_payload(ctx, payloads.into_iter().next().unwrap())
+    }
+}
+
+/// A codec-decoded set of payloads that can be deserialized later with to a user provided type.
+#[derive(Clone, Debug)]
+pub struct DecodablePayloads {
+    payloads: Vec<Payload>,
+    payload_converter: PayloadConverter,
+    context: SerializationContextData,
+}
+
+impl DecodablePayloads {
+    /// Create a new decodable payload set from raw payloads and the converter context needed to
+    /// deserialize them later.
+    pub fn new(
+        payloads: Vec<Payload>,
+        payload_converter: PayloadConverter,
+        context: SerializationContextData,
+    ) -> Self {
+        Self {
+            payloads,
+            payload_converter,
+            context,
+        }
+    }
+
+    /// Deserialize these payloads into a typed value using the stored payload converter.
+    pub fn deserialize<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<T, PayloadConversionError> {
+        self.payload_converter.from_payloads(
+            &SerializationContext {
+                data: &self.context,
+                converter: &self.payload_converter,
+            },
+            self.payloads.clone(),
+        )
+    }
+
+    /// Returns the underlying payloads.
+    pub fn raw(&self) -> &[Payload] {
+        &self.payloads
+    }
+
+    /// Consume this value and return the underlying payloads as a [`RawValue`].
+    pub fn into_raw(self) -> RawValue {
+        RawValue::new(self.payloads)
     }
 }
 
@@ -871,5 +910,54 @@ mod tests {
     fn multi_args_from_tuple() {
         let args: MultiArgs2<String, i32> = ("hello".to_string(), 42i32).into();
         assert_eq!(args, MultiArgs2("hello".to_string(), 42));
+    }
+
+    fn decodable_from_value<T: TemporalSerializable + 'static>(value: &T) -> DecodablePayloads {
+        let converter = PayloadConverter::default();
+        let payloads = converter
+            .to_payloads(
+                &SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                },
+                value,
+            )
+            .unwrap();
+        DecodablePayloads::new(payloads, converter, SerializationContextData::Workflow)
+    }
+    #[test]
+    fn decodable_payloads_roundtrip_string() {
+        let payloads = decodable_from_value(&"hello".to_string());
+
+        let result: String = payloads.deserialize().unwrap();
+
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_option_string() {
+        let payloads = decodable_from_value(&Some("hello".to_string()));
+
+        let result: Option<String> = payloads.deserialize().unwrap();
+
+        assert_eq!(result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_unit() {
+        let payloads = decodable_from_value(&());
+
+        let result: () = payloads.deserialize().unwrap();
+
+        assert_eq!(result, ());
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_vec_string() {
+        let payloads = decodable_from_value(&vec!["hello".to_string(), "world".to_string()]);
+
+        let result: Vec<String> = payloads.deserialize().unwrap();
+
+        assert_eq!(result, vec!["hello".to_string(), "world".to_string()]);
     }
 }

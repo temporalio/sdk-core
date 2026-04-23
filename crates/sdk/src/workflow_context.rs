@@ -41,8 +41,8 @@ use temporalio_common::{
         SerializationContextData, TemporalDeserializable,
     },
     error::{
-        ActivityExecutionError, ActivityFailureError, ChildWorkflowExecutionError,
-        ChildWorkflowFailureError, ChildWorkflowSignalError, ChildWorkflowStartError,
+        ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError,
+        ChildWorkflowStartError,
     },
     protos::{
         coresdk::{
@@ -1531,14 +1531,16 @@ where
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(resolution) => Poll::Ready({
                     let status = resolution.status.ok_or_else(|| {
-                        ActivityExecutionError::Failed(ActivityFailureError::new(
-                            Failure {
-                                message: "Activity completed without a status".to_string(),
-                                ..Default::default()
-                            },
-                            temporalio_common::protos::temporal::api::failure::v1::ActivityFailureInfo::default(),
-                            None,
-                        ))
+                        data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
+                                Failure {
+                                    message: "Activity completed without a status".to_string(),
+                                    ..Default::default()
+                                },
+                                ActivityExecutionDecodeHint { cancelled: false },
+                            )
+                            .expect("synthetic activity failure should decode")
                     })?;
 
                     match status {
@@ -1662,14 +1664,17 @@ where
                 Poll::Ready(result) => Poll::Ready({
                     use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
                     let status = result.status.ok_or_else(|| {
-                        ChildWorkflowExecutionError::Failed(Box::new(ChildWorkflowFailureError::new(
-                            Failure {
-                                message: "Child workflow completed without a status".to_string(),
-                                ..Default::default()
-                            },
-                            temporalio_common::protos::temporal::api::failure::v1::ChildWorkflowExecutionFailureInfo::default(),
-                            None,
-                        )))
+                        data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
+                                Failure {
+                                    message: "Child workflow completed without a status"
+                                        .to_string(),
+                                    ..Default::default()
+                                },
+                                ChildWorkflowExecutionDecodeHint,
+                            )
+                            .expect("synthetic child workflow failure should decode")
                     })?;
                     match status {
                         child_workflow_result::Status::Completed(success) => {

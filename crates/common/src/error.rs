@@ -1,17 +1,124 @@
 //! Shared error types used across Temporal SDK crates.
 
 use crate::{
-    data_converters::PayloadConversionError,
+    data_converters::{
+        DecodablePayloads, DefaultFailureConverter, FailureConverter, GenericPayloadConverter,
+        PayloadConversionError, PayloadConverter, RawValue, SerializationContext,
+        SerializationContextData, TemporalDeserializable, TemporalSerializable,
+    },
     protos::{
         coresdk::child_workflow::StartChildWorkflowExecutionFailedCause,
         temporal::api::{
             common::v1::{Payload, Payloads},
             enums::v1::{ApplicationErrorCategory, TimeoutType},
-            failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+            failure::v1::Failure,
         },
     },
 };
 use std::time::Duration;
+
+// We cannot store `Box<dyn TemporalSerializable>` directly here because erased values still need
+// to be driven back through the active `PayloadConverter` to reach serde-based implementations.
+trait SerializableFailurePayload: Send + Sync {
+    fn to_payloads(
+        &self,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<Vec<Payload>, PayloadConversionError>;
+}
+
+impl<T> SerializableFailurePayload for T
+where
+    T: TemporalSerializable + Send + Sync + 'static,
+{
+    fn to_payloads(
+        &self,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
+        payload_converter.to_payloads(
+            &SerializationContext {
+                data: context,
+                converter: payload_converter,
+            },
+            self,
+        )
+    }
+}
+
+/// Payloads attached to a failure, either as a deferred outbound value or decoded inbound payloads.
+#[derive(derive_more::Debug)]
+pub struct FailurePayloads {
+    repr: FailurePayloadsRepr,
+}
+
+#[derive(derive_more::Debug)]
+enum FailurePayloadsRepr {
+    #[debug("Serializable(...)")]
+    Serializable(#[debug(skip)] Box<dyn SerializableFailurePayload>),
+    Decoded(DecodablePayloads),
+}
+
+impl FailurePayloads {
+    pub(crate) fn encode(
+        &self,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<Payloads, PayloadConversionError> {
+        let payloads = match &self.repr {
+            FailurePayloadsRepr::Serializable(value) => {
+                value.to_payloads(payload_converter, context)?
+            }
+            FailurePayloadsRepr::Decoded(value) => value.raw().to_vec(),
+        };
+        Ok(Payloads { payloads })
+    }
+
+    /// Deserialize the decoded payloads into a typed value.
+    pub fn deserialize<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<T, PayloadConversionError> {
+        match &self.repr {
+            FailurePayloadsRepr::Decoded(value) => value.deserialize(),
+            FailurePayloadsRepr::Serializable(_) => Err(PayloadConversionError::WrongEncoding),
+        }
+    }
+
+    /// Returns the decoded raw payloads, if present.
+    pub fn raw(&self) -> Option<&[Payload]> {
+        match &self.repr {
+            FailurePayloadsRepr::Decoded(value) => Some(value.raw()),
+            FailurePayloadsRepr::Serializable(_) => None,
+        }
+    }
+
+    /// Consume this value and return the decoded payloads as a [`RawValue`], if present.
+    pub fn into_raw(self) -> Option<RawValue> {
+        match self.repr {
+            FailurePayloadsRepr::Decoded(value) => Some(value.into_raw()),
+            FailurePayloadsRepr::Serializable(_) => None,
+        }
+    }
+}
+
+impl From<DecodablePayloads> for FailurePayloads {
+    fn from(value: DecodablePayloads) -> Self {
+        Self {
+            repr: FailurePayloadsRepr::Decoded(value),
+        }
+    }
+}
+
+impl<T> From<T> for FailurePayloads
+where
+    T: TemporalSerializable + Send + Sync + 'static,
+{
+    fn from(value: T) -> Self {
+        Self {
+            repr: FailurePayloadsRepr::Serializable(Box::new(value)),
+        }
+    }
+}
 
 /// User-authored application failure metadata that can be converted into a Temporal failure.
 #[derive(Debug, bon::Builder)]
@@ -25,7 +132,8 @@ pub struct ApplicationFailure {
     next_retry_delay: Option<Duration>,
     #[builder(default = ApplicationErrorCategory::Unspecified)]
     category: ApplicationErrorCategory,
-    details: Option<Payloads>,
+    #[builder(into)]
+    details: Option<FailurePayloads>,
     failure: Option<Failure>,
     cause: Option<Box<IncomingError>>,
 }
@@ -78,8 +186,22 @@ impl ApplicationFailure {
         self.category
     }
 
-    /// Returns the raw encoded details payloads, if any.
-    pub fn details(&self) -> Option<&Payloads> {
+    /// Returns the decoded details deserialized as the requested type, if any.
+    pub fn details<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<Option<T>, PayloadConversionError> {
+        self.details
+            .as_ref()
+            .map(FailurePayloads::deserialize)
+            .transpose()
+    }
+
+    /// Returns the raw decoded details payloads, if any.
+    pub fn raw_details(&self) -> Option<&[Payload]> {
+        self.details.as_ref().and_then(FailurePayloads::raw)
+    }
+
+    pub(crate) fn failure_payloads(&self) -> Option<&FailurePayloads> {
         self.details.as_ref()
     }
 
@@ -105,7 +227,12 @@ impl ApplicationFailure {
         self.cause().and_then(IncomingError::as_cancelled)
     }
 
-    pub(crate) fn from_failure(failure: Failure, cause: Option<IncomingError>) -> Self {
+    pub(crate) fn from_failure(
+        failure: Failure,
+        cause: Option<IncomingError>,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Self {
         let app_info = failure
             .maybe_application_failure()
             .cloned()
@@ -117,7 +244,13 @@ impl ApplicationFailure {
             non_retryable: app_info.non_retryable,
             next_retry_delay: app_info.next_retry_delay.and_then(|d| d.try_into().ok()),
             category: app_info.category(),
-            details: app_info.details,
+            details: app_info.details.map(|details| {
+                FailurePayloads::from(DecodablePayloads::new(
+                    details.payloads,
+                    payload_converter.clone(),
+                    *context,
+                ))
+            }),
             failure: Some(failure),
             cause: cause.map(Box::new),
         }
@@ -153,30 +286,11 @@ impl From<PayloadConversionError> for ApplicationFailure {
 
 impl From<ApplicationFailure> for Failure {
     fn from(value: ApplicationFailure) -> Self {
-        if let Some(failure) = value.failure {
-            return failure;
-        }
-        let mut failure = value
-            .source
-            .chain()
-            .rfold(None, |cause, err| {
-                Some(Failure {
-                    message: err.to_string(),
-                    cause: cause.map(Box::new),
-                    ..Default::default()
-                })
-            })
-            .unwrap_or_default();
-        failure.failure_info = Some(FailureInfo::ApplicationFailureInfo(
-            ApplicationFailureInfo {
-                r#type: value.type_name.unwrap_or_default(),
-                non_retryable: value.non_retryable,
-                details: value.details,
-                next_retry_delay: value.next_retry_delay.and_then(|d| d.try_into().ok()),
-                category: value.category as i32,
-            },
-        ));
-        failure
+        DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(value))),
+            &PayloadConverter::default(),
+            &SerializationContextData::None,
+        )
     }
 }
 
@@ -445,7 +559,7 @@ macro_rules! incoming_failure_wrapper {
 
         impl $name {
             /// Creates a new normalized incoming error wrapper.
-            pub fn new(failure: Failure, cause: Option<IncomingError>) -> Self {
+            pub(crate) fn new(failure: Failure, cause: Option<IncomingError>) -> Self {
                 Self {
                     failure,
                     cause: cause.map(Box::new),
@@ -463,21 +577,25 @@ pub struct TimeoutError {
     failure: Failure,
     cause: Option<Box<IncomingError>>,
     timeout_type: TimeoutType,
-    last_heartbeat_details: Option<Payloads>,
+    last_heartbeat_details: Option<DecodablePayloads>,
 }
 
 impl TimeoutError {
     /// Creates a new normalized timeout error wrapper.
-    pub fn new(
+    pub(crate) fn new(
         failure: Failure,
         failure_info: crate::protos::temporal::api::failure::v1::TimeoutFailureInfo,
         cause: Option<IncomingError>,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
     ) -> Self {
         Self {
             failure,
             cause: cause.map(Box::new),
             timeout_type: failure_info.timeout_type(),
-            last_heartbeat_details: failure_info.last_heartbeat_details,
+            last_heartbeat_details: failure_info.last_heartbeat_details.map(|details| {
+                DecodablePayloads::new(details.payloads, payload_converter.clone(), *context)
+            }),
         }
     }
 
@@ -487,8 +605,20 @@ impl TimeoutError {
     }
 
     /// Returns the last heartbeat details carried by the timeout, if any.
-    pub fn last_heartbeat_details(&self) -> Option<&Payloads> {
-        self.last_heartbeat_details.as_ref()
+    pub fn last_heartbeat_details<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<Option<T>, PayloadConversionError> {
+        self.last_heartbeat_details
+            .as_ref()
+            .map(DecodablePayloads::deserialize)
+            .transpose()
+    }
+
+    /// Returns the raw decoded heartbeat details carried by the timeout, if any.
+    pub fn raw_last_heartbeat_details(&self) -> Option<&[Payload]> {
+        self.last_heartbeat_details
+            .as_ref()
+            .map(DecodablePayloads::raw)
     }
 }
 
@@ -499,26 +629,41 @@ impl_incoming_failure_wrapper!(TimeoutError);
 pub struct CancelledError {
     failure: Failure,
     cause: Option<Box<IncomingError>>,
-    details: Option<Payloads>,
+    details: Option<DecodablePayloads>,
 }
 
 impl CancelledError {
     /// Creates a new normalized cancellation error wrapper.
-    pub fn new(
+    pub(crate) fn new(
         failure: Failure,
         failure_info: crate::protos::temporal::api::failure::v1::CanceledFailureInfo,
         cause: Option<IncomingError>,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
     ) -> Self {
         Self {
             failure,
             cause: cause.map(Box::new),
-            details: failure_info.details,
+            details: failure_info.details.map(|details| {
+                DecodablePayloads::new(details.payloads, payload_converter.clone(), *context)
+            }),
         }
     }
 
-    /// Returns the cancellation details carried by the failure, if any.
-    pub fn details(&self) -> Option<&Payloads> {
-        self.details.as_ref()
+    /// Returns the cancellation details carried by the failure, deserialized as the requested
+    /// type, if any.
+    pub fn details<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<Option<T>, PayloadConversionError> {
+        self.details
+            .as_ref()
+            .map(DecodablePayloads::deserialize)
+            .transpose()
+    }
+
+    /// Returns the raw decoded cancellation details carried by the failure, if any.
+    pub fn raw_details(&self) -> Option<&[Payload]> {
+        self.details.as_ref().map(DecodablePayloads::raw)
     }
 }
 
@@ -542,7 +687,7 @@ pub struct ActivityFailureError {
 
 impl ActivityFailureError {
     /// Creates a new normalized activity failure wrapper.
-    pub fn new(
+    pub(crate) fn new(
         failure: Failure,
         failure_info: crate::protos::temporal::api::failure::v1::ActivityFailureInfo,
         cause: Option<IncomingError>,
@@ -619,7 +764,7 @@ pub struct ChildWorkflowFailureError {
 
 impl ChildWorkflowFailureError {
     /// Creates a new normalized child-workflow execution failure wrapper.
-    pub fn new(
+    pub(crate) fn new(
         failure: Failure,
         failure_info: crate::protos::temporal::api::failure::v1::ChildWorkflowExecutionFailureInfo,
         cause: Option<IncomingError>,
@@ -898,7 +1043,11 @@ pub struct ChildWorkflowSignalFailureError {
 
 impl ChildWorkflowSignalFailureError {
     /// Creates a child-workflow signal failure wrapper.
-    pub fn new(failure: Failure, error: IncomingError, cause: Option<IncomingError>) -> Self {
+    pub(crate) fn new(
+        failure: Failure,
+        error: IncomingError,
+        cause: Option<IncomingError>,
+    ) -> Self {
         Self {
             failure,
             error: Box::new(error),
@@ -917,7 +1066,21 @@ impl_incoming_failure_wrapper!(ChildWorkflowSignalFailureError);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::temporal::api::common::v1::Payload;
+    use crate::{
+        data_converters::{
+            GenericPayloadConverter, PayloadConverter, SerializationContext,
+            SerializationContextData,
+        },
+        protos::temporal::api::common::v1::Payload,
+    };
+
+    struct AlwaysFailsSerialize;
+
+    impl serde::Serialize for AlwaysFailsSerialize {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("serialize boom"))
+        }
+    }
 
     #[test]
     fn constructors_set_retryability_defaults() {
@@ -940,7 +1103,7 @@ mod tests {
             .non_retryable(true)
             .next_retry_delay(Duration::from_secs(3))
             .category(ApplicationErrorCategory::Benign)
-            .details(payloads.clone())
+            .details(RawValue::new(payloads.payloads.clone()))
             .build()
             .into();
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
@@ -952,6 +1115,64 @@ mod tests {
         assert_eq!(info.details, Some(payloads));
         assert_eq!(info.category(), ApplicationErrorCategory::Benign);
         assert_eq!(info.next_retry_delay.unwrap().seconds, 3);
+    }
+
+    #[test]
+    fn builder_accepts_raw_payload_details() {
+        let payload = Payload {
+            data: b"details".to_vec(),
+            ..Default::default()
+        };
+        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
+            .details(RawValue::new(vec![payload.clone()]))
+            .build()
+            .into();
+
+        let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
+            panic!("expected application failure info");
+        };
+        assert_eq!(info.details.unwrap().payloads, vec![payload]);
+    }
+
+    #[test]
+    fn builder_accepts_serializable_details() {
+        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
+            .details("details".to_string())
+            .build()
+            .into();
+
+        let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
+            panic!("expected application failure info");
+        };
+        let payloads = info.details.expect("expected details").payloads;
+        let converter = PayloadConverter::default();
+        let details: String = converter
+            .from_payloads(
+                &SerializationContext {
+                    data: &SerializationContextData::None,
+                    converter: &converter,
+                },
+                payloads,
+            )
+            .unwrap();
+        assert_eq!(details, "details");
+    }
+
+    #[test]
+    fn application_failure_into_failure_surfaces_detail_encoding_errors() {
+        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
+            .details(AlwaysFailsSerialize)
+            .build()
+            .into();
+
+        assert_eq!(
+            failure.message,
+            "Failed converting error to failure: Encoding error: serialize boom, original error message: oops"
+        );
+        assert!(matches!(
+            failure.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        ));
     }
 
     #[test]

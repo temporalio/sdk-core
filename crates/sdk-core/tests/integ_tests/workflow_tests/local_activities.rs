@@ -551,7 +551,7 @@ async fn cancel_after_act_starts(
             let ActivityExecutionError::Cancelled(cancel_err) = err else {
                 panic!("expected cancellation failure, got {err:?}");
             };
-            assert!(cancel_err.details().is_none());
+            assert!(cancel_err.raw_details().is_none());
             Ok(())
         }
     }
@@ -3287,7 +3287,7 @@ async fn cancel_after_act_starts_canned(
             let ActivityExecutionError::Cancelled(cancel_err) = err else {
                 panic!("expected cancelled error, got {err:?}");
             };
-            assert!(cancel_err.details().is_none());
+            assert!(cancel_err.raw_details().is_none());
             Ok(())
         }
     }

@@ -1,7 +1,6 @@
 use crate::common::{CoreWfStarter, get_integ_connection, integ_namespace};
 use futures::{FutureExt, future::BoxFuture};
 use std::{
-    io,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -32,7 +31,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
+    ActivityOptions, CancellableFuture, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
+    WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -99,6 +99,39 @@ impl TestActivities {
     }
 }
 
+struct FailurePayloadActivities;
+#[activities]
+impl FailurePayloadActivities {
+    #[activity]
+    async fn cancel_with_tracked_details(ctx: ActivityContext) -> Result<(), ActivityError> {
+        let mut ticker = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            tokio::select! {
+                _ = ctx.cancelled() => break,
+                _ = ticker.tick() => ctx.record_heartbeat(vec![]),
+            }
+        }
+        Err(ActivityError::Cancelled {
+            details: Some(
+                TrackedValue::new("codec-cancel-details".to_string())
+                    .as_json_payload()
+                    .map_err(ActivityError::from)?,
+            ),
+        })
+    }
+
+    #[activity]
+    async fn heartbeat_then_timeout(ctx: ActivityContext) -> Result<(), ActivityError> {
+        ctx.record_heartbeat(vec![
+            TrackedValue::new("codec-heartbeat-details".to_string())
+                .as_json_payload()
+                .map_err(ActivityError::from)?,
+        ]);
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        Ok(())
+    }
+}
+
 const FAILURE_CONVERTER_ERROR_MESSAGE: &str = "intentional failure converter error";
 const WORKFLOW_FAILURE_MESSAGE: &str = "workflow converter fallback failure";
 const ACTIVITY_PANIC_MESSAGE: &str = "activity converter fallback panic";
@@ -112,16 +145,17 @@ struct FailingFailureConverter;
 impl FailureConverter for FailingFailureConverter {
     fn to_failure(
         &self,
-        _err: OutgoingError,
+        err: OutgoingError,
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<
-        temporalio_common::protos::temporal::api::failure::v1::Failure,
-        PayloadConversionError,
-    > {
-        Err(PayloadConversionError::EncodingError(Box::new(
-            io::Error::other(FAILURE_CONVERTER_ERROR_MESSAGE),
-        )))
+    ) -> temporalio_common::protos::temporal::api::failure::v1::Failure {
+        temporalio_common::protos::temporal::api::failure::v1::Failure::application_failure(
+            format!(
+                "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: {}",
+                err
+            ),
+            false,
+        )
     }
 
     fn to_error(
@@ -192,6 +226,68 @@ impl DescribeDataConverterWorkflow {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         Ok(output)
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancellationDetailsWorkflow;
+#[workflow_methods]
+impl CancellationDetailsWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<TrackedWrapper> {
+        let act = ctx.start_activity(
+            FailurePayloadActivities::cancel_with_tracked_details,
+            (),
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .heartbeat_timeout(Duration::from_secs(1))
+                .cancellation_type(
+                    temporalio_common::protos::coresdk::workflow_commands::ActivityCancellationType::WaitCancellationCompleted,
+                )
+                .build(),
+        );
+        // WaitCancellationCompleted only carries activity-supplied details if the worker has
+        // started the activity and observed the cancellation.
+        ctx.timer(Duration::from_millis(100)).await;
+        act.cancel();
+        let err = act.await.expect_err("activity should be cancelled");
+        let Some(cancelled) = err.as_cancelled() else {
+            panic!("expected cancelled failure, got {err:?}");
+        };
+        let details = cancelled
+            .details::<TrackedValue>()
+            .expect("cancellation details should decode")
+            .expect("cancellation details should be present");
+        Ok(TrackedWrapper(details))
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct HeartbeatDetailsWorkflow;
+#[workflow_methods]
+impl HeartbeatDetailsWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<TrackedWrapper> {
+        let err = ctx
+            .start_activity(
+                FailurePayloadActivities::heartbeat_then_timeout,
+                (),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .heartbeat_timeout(Duration::from_secs(1))
+                    .retry_policy(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    })
+                    .build(),
+            )
+            .await
+            .expect_err("activity should time out");
+        let timeout = err.as_timeout().expect("activity should timeout");
+        let details = timeout
+            .last_heartbeat_details()?
+            .expect("heartbeat details should be present");
+        Ok(TrackedWrapper(details))
     }
 }
 
@@ -929,4 +1025,102 @@ async fn describe_decodes_user_metadata_with_ungated_xor_codec() {
     // Making sure codec isn't used when decoding user metadata
     assert_eq!(desc.static_summary(), Some("codec summary"));
     assert_eq!(desc.static_details(), Some("codec details"));
+}
+
+#[tokio::test]
+async fn codec_roundtrips_activity_cancellation_details() {
+    let wf_name = CancellationDetailsWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_activities(FailurePayloadActivities);
+    starter.sdk_config.task_types = WorkerTaskTypes::all();
+    starter
+        .sdk_config
+        .register_workflow::<CancellationDetailsWorkflow>();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let handle = worker
+        .submit_workflow(
+            CancellationDetailsWorkflow::run,
+            (),
+            WorkflowStartOptions::new(starter.get_task_queue(), wf_id).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let details = handle.get_result(Default::default()).await.unwrap().0;
+    assert_eq!(details.data, "codec-cancel-details");
+    assert!(
+        codec.encode_count() > 0,
+        "codec should encode cancellation details"
+    );
+    assert!(
+        codec.decode_count() > 0,
+        "codec should decode cancellation details"
+    );
+}
+
+#[tokio::test]
+async fn codec_roundtrips_activity_heartbeat_timeout_details() {
+    let wf_name = HeartbeatDetailsWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_activities(FailurePayloadActivities);
+    starter.sdk_config.task_types = WorkerTaskTypes::all();
+    starter
+        .sdk_config
+        .register_workflow::<HeartbeatDetailsWorkflow>();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let handle = worker
+        .submit_workflow(
+            HeartbeatDetailsWorkflow::run,
+            (),
+            WorkflowStartOptions::new(starter.get_task_queue(), wf_id).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let details = handle.get_result(Default::default()).await.unwrap().0;
+    assert_eq!(details.data, "codec-heartbeat-details");
+    assert!(
+        codec.encode_count() > 0,
+        "codec should encode heartbeat details"
+    );
+    assert!(
+        codec.decode_count() > 0,
+        "codec should decode heartbeat details"
+    );
 }

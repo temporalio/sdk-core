@@ -655,9 +655,9 @@ mod tests {
     #[tokio::test]
     async fn test_encode_failure_encodes_application_failure_details() {
         let mut failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("app boom"))
-            .details(Payloads {
-                payloads: vec![make_payload("detail")],
-            })
+            .details(crate::data_converters::RawValue::new(vec![make_payload(
+                "detail",
+            )]))
             .build()
             .into();
 

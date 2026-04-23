@@ -1640,7 +1640,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
             let ActivityExecutionError::Cancelled(cancel_err) = err else {
                 panic!("expected cancelled error, got {err:?}");
             };
-            assert!(cancel_err.details().is_none());
+            assert!(cancel_err.raw_details().is_none());
             assert!(
                 cancel_err.cause().is_none(),
                 "expected cancel to be end of cause chain, but found another: {:?}",
@@ -1681,7 +1681,7 @@ impl ImmediateActivityCancelationWorkflow {
         let ActivityExecutionError::Cancelled(cancel_err) = err else {
             panic!("expected cancelled error, got {err:?}");
         };
-        assert!(cancel_err.details().is_none());
+        assert!(cancel_err.raw_details().is_none());
         assert!(cancel_err.cause().is_none());
         Ok(())
     }

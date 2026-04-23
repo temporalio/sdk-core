@@ -485,7 +485,7 @@ impl ParentCancelsChildWf {
         let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
-        assert!(cancelled.details().is_none());
+        assert!(cancelled.raw_details().is_none());
         Ok(())
     }
 }
@@ -529,7 +529,7 @@ impl RuntimeParentCancelsChildWf {
         let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
-        assert!(cancelled.details().is_none());
+        assert!(cancelled.raw_details().is_none());
         assert!(cancelled.cause().is_none());
         Ok(())
     }
@@ -648,7 +648,7 @@ impl GrandchildCancellationWf {
         let Some(cancelled) = grandchild_failure.as_cancelled() else {
             panic!("grandchild failure should retain the cancelled reason");
         };
-        assert!(cancelled.details().is_none());
+        assert!(cancelled.raw_details().is_none());
         Ok(())
     }
 }
@@ -1151,7 +1151,7 @@ impl CancelChildBeforeStartedCannedWf {
         let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
-        assert!(cancelled.details().is_none());
+        assert!(cancelled.raw_details().is_none());
         assert!(cancelled.cause().is_none());
         Err(WorkflowTermination::Cancelled)
     }
