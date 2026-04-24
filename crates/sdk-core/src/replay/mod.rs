@@ -2,6 +2,20 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
+/// Pre-built test histories for common workflow patterns.
+#[cfg(any(feature = "test-utilities", test))]
+pub mod canned_histories;
+#[cfg(any(feature = "test-utilities", test))]
+mod history_builder;
+mod history_info;
+
+#[cfg(any(feature = "test-utilities", test))]
+pub use history_builder::{
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
+    default_wes_attribs,
+};
+pub use history_info::HistoryInfo;
+
 use crate::{
     Worker, WorkerConfig,
     worker::{
@@ -15,9 +29,6 @@ use std::{
     pin::Pin,
     sync::{Arc, OnceLock},
     task::{Context, Poll},
-};
-pub use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
 };
 use temporalio_common::{
     protos::{
@@ -140,6 +151,7 @@ impl HistoryForReplay {
         }
     }
 }
+#[cfg(any(feature = "test-utilities", test))]
 impl From<TestHistoryBuilder> for HistoryForReplay {
     fn from(thb: TestHistoryBuilder) -> Self {
         thb.get_full_history_info().unwrap().into()

@@ -1,5 +1,11 @@
-use crate::protos::{
-    HistoryInfo,
+use crate::replay::HistoryInfo;
+use anyhow::bail;
+use prost_types::Timestamp;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
+use temporalio_common::protos::{
     constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         AsJsonPayloadExt, IntoPayloadsExt,
@@ -21,12 +27,6 @@ use crate::protos::{
         update,
         update::v1::outcome,
     },
-};
-use anyhow::bail;
-use prost_types::Timestamp;
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime},
 };
 use uuid::Uuid;
 

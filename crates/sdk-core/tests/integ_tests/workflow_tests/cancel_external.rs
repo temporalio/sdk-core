@@ -2,7 +2,6 @@ use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
         coresdk::common::NamespacedWorkflowExecution,
         temporal::api::enums::v1::{CommandType, EventType},
     },
@@ -10,7 +9,10 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowResult};
-use temporalio_sdk_core::test_help::MockPollCfg;
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::MockPollCfg,
+};
 
 #[workflow]
 #[derive(Default)]

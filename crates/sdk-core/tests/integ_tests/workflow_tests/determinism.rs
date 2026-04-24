@@ -14,7 +14,6 @@ use temporalio_common::{
     UntypedWorkflow,
     data_converters::RawValue,
     protos::{
-        TestHistoryBuilder, canned_histories,
         coresdk::AsJsonPayloadExt,
         temporal::api::{
             enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -30,7 +29,7 @@ use temporalio_sdk::{
     workflows,
 };
 use temporalio_sdk_core::{
-    replay::DEFAULT_WORKFLOW_TYPE,
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
     test_help::{CoreInternalFlags, MockPollCfg, ResponseType, mock_worker_client},
 };
 

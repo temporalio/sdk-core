@@ -6,7 +6,6 @@ use temporalio_client::{
 };
 use temporalio_common::{
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
         coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
         temporal::api::{
             command::v1::{Command, command},
@@ -18,7 +17,10 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
-use temporalio_sdk_core::test_help::MockPollCfg;
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::MockPollCfg,
+};
 use uuid::Uuid;
 
 #[workflow]

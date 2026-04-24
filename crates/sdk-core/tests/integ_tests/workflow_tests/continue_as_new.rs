@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     protos::{
-        DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
         temporal::api::{
             command::v1::command::Attributes,
@@ -15,7 +14,11 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{ContinueAsNewOptions, WorkflowContext, WorkflowResult, WorkflowTermination};
-use temporalio_sdk_core::{TunerHolder, test_help::MockPollCfg};
+use temporalio_sdk_core::{
+    TunerHolder,
+    replay::{DEFAULT_WORKFLOW_TYPE, canned_histories},
+    test_help::MockPollCfg,
+};
 
 #[workflow]
 #[derive(Default)]

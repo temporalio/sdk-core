@@ -18,7 +18,6 @@ use temporalio_client::{
     grpc::WorkflowService,
 };
 use temporalio_common::{
-    prost_dur,
     protos::{
         coresdk::AsJsonPayloadExt,
         temporal::api::{
@@ -40,7 +39,7 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
-    TunerHolder,
+    TunerHolder, prost_dur,
 };
 use tokio::{sync::Notify, time::sleep};
 use tonic::IntoRequest;
