@@ -154,12 +154,8 @@ impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
 
     fn adapt(self, normalized: IncomingError) -> Self::Output {
         let failure = normalized.failure().clone();
-        let payload_converter = PayloadConverter::default();
-        let cause = failure.cause.clone().map(|cause| {
-            decode_failure(*cause, &payload_converter, &SerializationContextData::None)
-        });
         ChildWorkflowSignalError::Failed(Box::new(ChildWorkflowSignalFailureError::new(
-            failure, normalized, cause,
+            failure, normalized,
         )))
     }
 }
@@ -314,7 +310,10 @@ impl EncodeFailure for ApplicationFailure {
             .transpose()?;
         Ok(Failure {
             message: self.to_string(),
-            cause: encode_application_failure_cause(self.source_error().as_ref()),
+            cause: self
+                .cause()
+                .map(|cause| Box::new(cause.failure().clone()))
+                .or_else(|| encode_application_failure_cause(self.source_error().as_ref())),
             failure_info: Some(FailureInfo::ApplicationFailureInfo(
                 ApplicationFailureInfo {
                     r#type: self.type_name().unwrap_or_default().to_owned(),
@@ -786,6 +785,30 @@ mod tests {
     }
 
     #[test]
+    fn application_failures_fall_back_to_source_error() {
+        let activity_failure = Failure {
+            message: "activity failed".to_owned(),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(
+                ActivityFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let app = ApplicationFailure::new(anyhow::Error::new(ActivityExecutionError::Failed(
+            ActivityFailureError::new(
+                activity_failure.clone(),
+                ActivityFailureInfo::default(),
+                None,
+            ),
+        )));
+
+        assert!(app.cause().is_none());
+
+        let converted = convert(OutgoingWorkflowError::Application(Box::new(app)));
+
+        assert_eq!(converted.cause.unwrap().as_ref(), &activity_failure);
+    }
+
+    #[test]
     fn application_failures_skip_generic_wrappers_around_known_causes() {
         let activity_failure = Failure {
             message: "activity failed".to_owned(),
@@ -938,6 +961,48 @@ mod tests {
         };
         assert_eq!(app.failure(), Some(&failure));
         assert!(matches!(app.cause(), Some(IncomingError::Timeout(_))));
+    }
+
+    #[test]
+    fn decoded_application_failures_preserve_cause() {
+        let failure = Failure {
+            message: "app boom".to_owned(),
+            cause: Some(Box::new(timeout_failure("timed out"))),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Application(app) = decoded else {
+            panic!("expected application error");
+        };
+        assert!(app.as_timeout().is_some());
+
+        let reencoded = convert(OutgoingWorkflowError::Application(Box::new(app)));
+
+        assert_eq!(reencoded.message, failure.message);
+        assert_eq!(reencoded.cause.as_deref(), failure.cause.as_deref());
+
+        let decoded_reencoded = DefaultFailureConverter
+            .to_error(
+                reencoded,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+        let IncomingError::Application(roundtripped) = decoded_reencoded else {
+            panic!("expected application error");
+        };
+        assert!(roundtripped.as_timeout().is_some());
     }
 
     #[test]

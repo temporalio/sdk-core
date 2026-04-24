@@ -2,9 +2,9 @@
 
 use crate::{
     data_converters::{
-        DecodablePayloads, DefaultFailureConverter, FailureConverter, GenericPayloadConverter,
-        PayloadConversionError, PayloadConverter, RawValue, SerializationContext,
-        SerializationContextData, TemporalDeserializable, TemporalSerializable,
+        DecodablePayloads, GenericPayloadConverter, PayloadConversionError, PayloadConverter,
+        RawValue, SerializationContext, SerializationContextData, TemporalDeserializable,
+        TemporalSerializable,
     },
     protos::{
         coresdk::child_workflow::StartChildWorkflowExecutionFailedCause,
@@ -210,6 +210,11 @@ impl ApplicationFailure {
         self.failure.as_ref()
     }
 
+    /// Consumes this application failure and returns the retained proto failure, if one exists.
+    pub fn into_failure(self) -> Option<Failure> {
+        self.failure
+    }
+
     /// Returns the normalized cause, if any.
     pub fn cause(&self) -> Option<&IncomingError> {
         self.cause.as_deref()
@@ -281,16 +286,6 @@ impl From<anyhow::Error> for ApplicationFailure {
 impl From<PayloadConversionError> for ApplicationFailure {
     fn from(value: PayloadConversionError) -> Self {
         Self::new(value)
-    }
-}
-
-impl From<ApplicationFailure> for Failure {
-    fn from(value: ApplicationFailure) -> Self {
-        DefaultFailureConverter.to_failure(
-            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(value))),
-            &PayloadConverter::default(),
-            &SerializationContextData::None,
-        )
     }
 }
 
@@ -444,7 +439,9 @@ impl IncomingError {
     /// Consumes this normalized error and returns the retained proto failure.
     pub fn into_failure(self) -> Failure {
         match self {
-            IncomingError::Application(err) => err.into(),
+            IncomingError::Application(err) => err
+                .into_failure()
+                .expect("decoded application failures retain their original proto"),
             IncomingError::Timeout(err) => err.into_failure(),
             IncomingError::Cancelled(err) => err.into_failure(),
             IncomingError::Terminated(err) => err.into_failure(),
@@ -1038,21 +1035,25 @@ impl ChildWorkflowSignalError {
 pub struct ChildWorkflowSignalFailureError {
     failure: Failure,
     error: Box<IncomingError>,
-    cause: Option<Box<IncomingError>>,
 }
 
 impl ChildWorkflowSignalFailureError {
     /// Creates a child-workflow signal failure wrapper.
-    pub(crate) fn new(
-        failure: Failure,
-        error: IncomingError,
-        cause: Option<IncomingError>,
-    ) -> Self {
+    pub(crate) fn new(failure: Failure, error: IncomingError) -> Self {
         Self {
             failure,
             error: Box::new(error),
-            cause: cause.map(Box::new),
         }
+    }
+
+    /// Returns the retained top-level proto failure.
+    pub fn failure(&self) -> &Failure {
+        &self.failure
+    }
+
+    /// Returns the normalized direct cause of the child-workflow signal failure, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        self.error.cause()
     }
 
     /// Returns the direct decoded incoming error represented by the top-level proto failure.
@@ -1061,15 +1062,26 @@ impl ChildWorkflowSignalFailureError {
     }
 }
 
-impl_incoming_failure_wrapper!(ChildWorkflowSignalFailureError);
+impl std::fmt::Display for ChildWorkflowSignalFailureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.failure.fmt(f)
+    }
+}
+
+impl std::error::Error for ChildWorkflowSignalFailureError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.cause()
+            .map(|cause| cause as &(dyn std::error::Error + 'static))
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         data_converters::{
-            GenericPayloadConverter, PayloadConverter, SerializationContext,
-            SerializationContextData,
+            DefaultFailureConverter, FailureConverter, GenericPayloadConverter, PayloadConverter,
+            SerializationContext, SerializationContextData,
         },
         protos::temporal::api::{common::v1::Payload, failure::v1::failure::FailureInfo},
     };
@@ -1098,14 +1110,19 @@ mod tests {
                 ..Default::default()
             }],
         };
-        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
-            .type_name("MyType".to_owned())
-            .non_retryable(true)
-            .next_retry_delay(Duration::from_secs(3))
-            .category(ApplicationErrorCategory::Benign)
-            .details(RawValue::new(payloads.payloads.clone()))
-            .build()
-            .into();
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("oops"))
+                    .type_name("MyType".to_owned())
+                    .non_retryable(true)
+                    .next_retry_delay(Duration::from_secs(3))
+                    .category(ApplicationErrorCategory::Benign)
+                    .details(RawValue::new(payloads.payloads.clone()))
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::None,
+        );
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
             panic!("expected application failure info");
         };
@@ -1123,10 +1140,15 @@ mod tests {
             data: b"details".to_vec(),
             ..Default::default()
         };
-        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
-            .details(RawValue::new(vec![payload.clone()]))
-            .build()
-            .into();
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("oops"))
+                    .details(RawValue::new(vec![payload.clone()]))
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::None,
+        );
 
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
             panic!("expected application failure info");
@@ -1136,10 +1158,15 @@ mod tests {
 
     #[test]
     fn builder_accepts_serializable_details() {
-        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
-            .details("details".to_string())
-            .build()
-            .into();
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("oops"))
+                    .details("details".to_string())
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::None,
+        );
 
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
             panic!("expected application failure info");
@@ -1159,11 +1186,16 @@ mod tests {
     }
 
     #[test]
-    fn application_failure_into_failure_surfaces_detail_encoding_errors() {
-        let failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("oops"))
-            .details(AlwaysFailsSerialize)
-            .build()
-            .into();
+    fn application_failure_encoding_surfaces_detail_encoding_errors() {
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("oops"))
+                    .details(AlwaysFailsSerialize)
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::None,
+        );
 
         assert_eq!(
             failure.message,

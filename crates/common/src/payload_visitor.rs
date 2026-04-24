@@ -194,7 +194,8 @@ include!(concat!(env!("OUT_DIR"), "/payload_visitor_impl.rs"));
 mod tests {
     use super::*;
     use crate::{
-        error::ApplicationFailure,
+        data_converters::{DefaultFailureConverter, FailureConverter, PayloadConverter},
+        error::{ApplicationFailure, OutgoingError, OutgoingWorkflowError},
         protos::{
             coresdk::{
                 activity_result::{
@@ -215,7 +216,7 @@ mod tests {
             },
             temporal::api::{
                 common::v1::{Memo, SearchAttributes},
-                failure::v1::{Failure, failure::FailureInfo},
+                failure::v1::failure::FailureInfo,
             },
         },
     };
@@ -654,12 +655,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_encode_failure_encodes_application_failure_details() {
-        let mut failure: Failure = ApplicationFailure::builder(anyhow::anyhow!("app boom"))
-            .details(crate::data_converters::RawValue::new(vec![make_payload(
-                "detail",
-            )]))
-            .build()
-            .into();
+        let mut failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Workflow(OutgoingWorkflowError::Application(Box::new(
+                ApplicationFailure::builder(anyhow::anyhow!("app boom"))
+                    .details(crate::data_converters::RawValue::new(vec![make_payload(
+                        "detail",
+                    )]))
+                    .build(),
+            ))),
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         encode_payloads(
             &mut failure,
