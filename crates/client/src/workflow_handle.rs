@@ -282,7 +282,6 @@ impl WorkflowExecutionDescription {
     }
 }
 
-// TODO [rust-sdk-branch]: Could implment stream a-la ListWorkflowsStream
 /// Workflow execution history returned by `WorkflowHandle::fetch_history`.
 #[derive(Debug, Clone)]
 pub struct WorkflowHistory {
