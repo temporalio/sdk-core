@@ -1,11 +1,18 @@
 //! Shared tests that are meant to be run against both local dev server and cloud
 
-use crate::common::CoreWfStarter;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering::Relaxed},
+use crate::common::{CoreWfStarter, activity_functions::StdActivities};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+    },
+    time::Duration,
+};
+use temporalio_client::{
+    WorkflowFetchHistoryOptions, WorkflowStartOptions, WorkflowTerminateOptions,
 };
 use temporalio_common::{
+    UntypedWorkflow,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
         history::v1::history_event::Attributes::{
@@ -15,7 +22,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult, WorkflowTermination};
 
 pub(crate) mod priority;
 
@@ -91,4 +98,113 @@ pub(crate) fn is_oversize_grpc_event(
         } else {
             false
         }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ShutdownTimerActivityLoopWf;
+
+#[workflow_methods]
+impl ShutdownTimerActivityLoopWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        loop {
+            ctx.timer(Duration::from_millis(10)).await;
+            ctx.start_activity(
+                StdActivities::no_op,
+                (),
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(10)),
+            )
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+        }
+    }
+}
+
+/// Starts 10 workflows that each run a tight timer+activity loop, then shuts down the worker
+/// and verifies:
+///   1. Shutdown completes rapidly (< 5s)
+///   2. No workflow task failures or timeouts appear in any workflow's history
+pub(crate) async fn shutdown_during_active_timer_activity_workflows() {
+    let wf_name = "shutdown_during_active_timer_activity_workflows";
+    let num_workflows = 10;
+
+    let mut starter =
+        if let Some(wfs) = CoreWfStarter::new_cloud_or_local(wf_name, ">=1.6.3-serverless").await {
+            wfs
+        } else {
+            return;
+        };
+    starter.sdk_config.register_activities(StdActivities);
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<ShutdownTimerActivityLoopWf>();
+
+    let core = worker.core_worker();
+    core.validate().await.unwrap();
+    assert!(
+        core.get_namespace_capabilities().graceful_poll_shutdown(),
+        "Server must support graceful poll shutdown for this test"
+    );
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut wf_ids = Vec::with_capacity(num_workflows);
+    for i in 0..num_workflows {
+        let wf_id = format!("{task_queue}-{i}");
+        worker
+            .submit_workflow(
+                ShutdownTimerActivityLoopWf::run,
+                (),
+                WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
+            )
+            .await
+            .unwrap();
+        wf_ids.push(wf_id);
+    }
+    // Don't wait for workflow completion — these loop forever
+    worker.fetch_results = false;
+
+    let shutdown_handle = worker.inner_mut().shutdown_handle();
+    let run_fut = async { worker.run_until_done().await.unwrap() };
+
+    let shutdown_fut = async {
+        // Let workflows run a few iterations
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        shutdown_handle();
+    };
+
+    let shutdown_start = std::time::Instant::now();
+    tokio::join!(run_fut, shutdown_fut);
+    let shutdown_elapsed = shutdown_start.elapsed();
+
+    assert!(
+        shutdown_elapsed < Duration::from_secs(5),
+        "Worker shutdown took {shutdown_elapsed:?}, expected < 5s"
+    );
+
+    let client = starter.get_client().await;
+    for wf_id in &wf_ids {
+        client
+            .get_workflow_handle::<UntypedWorkflow>(wf_id)
+            .terminate(WorkflowTerminateOptions::default())
+            .await
+            .unwrap();
+
+        let history = client
+            .get_workflow_handle::<UntypedWorkflow>(wf_id)
+            .fetch_history(WorkflowFetchHistoryOptions::default())
+            .await
+            .unwrap();
+        let bad_events: Vec<_> = history
+            .events()
+            .iter()
+            .filter(|e| {
+                e.event_type() == EventType::WorkflowTaskFailed
+                    || e.event_type() == EventType::WorkflowTaskTimedOut
+            })
+            .collect();
+        assert!(
+            bad_events.is_empty(),
+            "Workflow {wf_id} had unexpected WFT failures/timeouts: {bad_events:?}"
+        );
+    }
 }
