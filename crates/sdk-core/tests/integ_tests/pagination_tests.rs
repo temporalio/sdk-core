@@ -3,18 +3,18 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        enums::v1::{EventType, WorkflowTaskFailedCause},
-        history::v1::{History, HistoryEvent},
-        workflowservice::v1::GetWorkflowExecutionHistoryResponse,
-    },
+use temporalio_common::protos::temporal::api::{
+    common::v1::WorkflowExecution,
+    enums::v1::{EventType, WorkflowTaskFailedCause},
+    history::v1::{History, HistoryEvent},
+    workflowservice::v1::GetWorkflowExecutionHistoryResponse,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowResult};
-use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::{MockPollCfg, ResponseType, mock_worker_client},
+};
 
 #[workflow]
 struct WeirdPaginationWf {

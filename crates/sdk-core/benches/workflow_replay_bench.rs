@@ -12,13 +12,13 @@ use std::{
     thread,
     time::Duration,
 };
-use temporalio_common::{
-    protos::{DEFAULT_WORKFLOW_TYPE, canned_histories},
-    telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes},
-};
+use temporalio_common::telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowResult};
-use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
+use temporalio_sdk_core::{
+    CoreRuntime,
+    replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, canned_histories},
+};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()

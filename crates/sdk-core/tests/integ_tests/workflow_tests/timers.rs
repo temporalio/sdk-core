@@ -3,9 +3,7 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{future::Future, pin::Pin, time::Duration};
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
-    prost_dur,
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
             workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
             workflow_completion::WorkflowActivationCompletion,
@@ -14,13 +12,16 @@ use temporalio_common::{
             enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
             failure::v1::Failure,
         },
-        test_utils::start_timer_cmd,
     },
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{CancellableFuture, WorkflowContext, WorkflowResult};
-use temporalio_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};
+use temporalio_sdk_core::{
+    prost_dur,
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
+    test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown, start_timer_cmd},
+};
 
 #[workflow]
 #[derive(Default)]
