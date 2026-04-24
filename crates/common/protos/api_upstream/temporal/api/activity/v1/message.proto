@@ -15,6 +15,7 @@ import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/deployment/v1/message.proto";
 import "temporal/api/enums/v1/activity.proto";
+import "temporal/api/callback/v1/message.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
@@ -161,6 +162,12 @@ message ActivityExecutionInfo {
 
     // Set if activity cancelation was requested.
     string canceled_reason = 32;
+
+    // Links to related entities, such as the entity that started this activity.
+    repeated temporal.api.common.v1.Link links = 33;
+
+    // Total number of heartbeats recorded across all attempts of this activity, including retries.
+    int64 total_heartbeat_count = 34;
 }
 
 // Limited activity information returned in the list response.
@@ -194,4 +201,21 @@ message ActivityExecutionListInfo {
     // The difference between close time and scheduled time.
     // This field is only populated if the activity is closed.
     google.protobuf.Duration execution_duration = 11;
+}
+
+// CallbackInfo contains the state of an attached activity callback.
+message CallbackInfo {
+    // Trigger for when the activity is closed.
+    message ActivityClosed {}
+
+    message Trigger {
+        oneof variant {
+            ActivityClosed activity_closed = 1;
+        }
+    }
+
+    // Trigger for this callback.
+    Trigger trigger = 1;
+    // Common callback info.
+    temporal.api.callback.v1.CallbackInfo info = 2;
 }

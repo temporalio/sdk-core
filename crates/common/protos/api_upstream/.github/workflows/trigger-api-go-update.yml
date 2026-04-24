@@ -56,7 +56,7 @@ jobs:
           esac
 
           gh workflow run update-proto.yml -R https://github.com/temporalio/api-go \
-            -r master \
+            -r "${BRANCH}" \
             -f branch="${BRANCH}" \
             -f commit_author="${COMMIT_AUTHOR}" \
             -f commit_author_email="${COMMIT_AUTHOR_EMAIL}" \

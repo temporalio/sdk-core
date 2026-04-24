@@ -102,7 +102,8 @@ message CancelWorkflowExecutionCommandAttributes {
 }
 
 message RequestCancelExternalWorkflowExecutionCommandAttributes {
-    string namespace = 1;
+    // Deprecated. Cross-namespace operations are disabled by default as of server 1.30.1.
+    string namespace = 1 [deprecated = true];
     string workflow_id = 2;
     string run_id = 3;
     // Deprecated.
@@ -116,7 +117,8 @@ message RequestCancelExternalWorkflowExecutionCommandAttributes {
 }
 
 message SignalExternalWorkflowExecutionCommandAttributes {
-    string namespace = 1;
+    // Deprecated. Cross-namespace operations are disabled by default as of server 1.30.1.
+    string namespace = 1 [deprecated = true];
     temporal.api.common.v1.WorkflowExecution execution = 2;
     // The workflow author-defined name of the signal to send to the workflow.
     string signal_name = 3;
@@ -188,7 +190,8 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
 }
 
 message StartChildWorkflowExecutionCommandAttributes {
-    string namespace = 1;
+    // Deprecated. Cross-namespace operations are disabled by default as of server 1.30.1.
+    string namespace = 1 [deprecated = true];
     string workflow_id = 2;
     temporal.api.common.v1.WorkflowType workflow_type = 3;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
