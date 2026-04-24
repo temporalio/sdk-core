@@ -6,7 +6,7 @@ edition = "2024"
 license-file = { workspace = true }
 description = "Library for building new Temporal SDKs"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 exclude = ["machine_coverage/*"]
