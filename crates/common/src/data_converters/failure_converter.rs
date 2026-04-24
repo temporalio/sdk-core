@@ -413,7 +413,9 @@ fn encode_outgoing_activity_error(
         OutgoingActivityError::Cancelled { details } => Failure {
             message: "Activity cancelled".to_string(),
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-                details: details.map(Into::into),
+                details: details
+                    .map(|details| details.encode(payload_converter, context))
+                    .transpose()?,
             })),
             ..Default::default()
         },
@@ -1395,5 +1397,27 @@ mod tests {
             failure.failure_info,
             Some(FailureInfo::CanceledFailureInfo(_))
         ));
+    }
+
+    #[test]
+    fn outgoing_cancelled_activity_errors_encode_serializable_details_with_payload_converter() {
+        let failure = DefaultFailureConverter.to_failure(
+            OutgoingError::Activity(OutgoingActivityError::Cancelled {
+                details: Some("detail".to_string().into()),
+            }),
+            &PayloadConverter::default(),
+            &SerializationContextData::Activity,
+        );
+
+        let err = DefaultFailureConverter
+            .to_error(
+                failure,
+                &PayloadConverter::default(),
+                &SerializationContextData::Activity,
+            )
+            .unwrap();
+        let cancelled = err.as_cancelled().unwrap();
+        let details: String = cancelled.details().unwrap().unwrap();
+        assert_eq!(details, "detail");
     }
 }

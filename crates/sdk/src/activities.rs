@@ -61,7 +61,7 @@ use temporalio_common::{
     data_converters::{
         DataConverter, GenericPayloadConverter, SerializationContext, SerializationContextData,
     },
-    error::ApplicationFailure,
+    error::{ApplicationFailure, FailurePayloads},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -234,8 +234,8 @@ pub enum ActivityError {
     Application(Box<ApplicationFailure>),
     /// Return this error to indicate your activity is cancelling
     Cancelled {
-        /// Some data to save as the cancellation reason
-        details: Option<Payload>,
+        /// Optional cancellation details.
+        details: Option<FailurePayloads>,
     },
     /// Return this error to indicate that the activity will be completed outside of this activity
     /// definition, by an external client.
@@ -246,6 +246,17 @@ impl ActivityError {
     /// Construct a cancelled error without details
     pub fn cancelled() -> Self {
         Self::Cancelled { details: None }
+    }
+
+    /// Construct a cancelled error with details that will be converted using the active data
+    /// converter.
+    pub fn cancelled_with_details<T>(details: T) -> Self
+    where
+        T: Into<FailurePayloads>,
+    {
+        Self::Cancelled {
+            details: Some(details.into()),
+        }
     }
 
     /// Construct an application activity error.

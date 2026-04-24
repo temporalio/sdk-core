@@ -490,7 +490,9 @@ async fn cancel_after_act_starts(
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(100)) => {}
                     _ = ctx.cancelled() => {
-                        return Err(ActivityError::cancelled())
+                        return Err(ActivityError::cancelled_with_details(
+                            "cancel-after-start".to_string(),
+                        ))
                     }
                     _ = self.manual_cancel.cancelled() => {
                         return Ok(())
@@ -551,7 +553,14 @@ async fn cancel_after_act_starts(
             let ActivityExecutionError::Cancelled(cancel_err) = err else {
                 panic!("expected cancellation failure, got {err:?}");
             };
-            assert!(cancel_err.raw_details().is_none());
+            let expected_details = if bo_dur == Duration::from_secs(1)
+                && cancel_type == ActivityCancellationType::WaitCancellationCompleted
+            {
+                Some("cancel-after-start".to_string())
+            } else {
+                None
+            };
+            assert_eq!(cancel_err.details::<String>().unwrap(), expected_details);
             Ok(())
         }
     }

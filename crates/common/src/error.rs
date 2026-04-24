@@ -314,8 +314,8 @@ pub enum OutgoingActivityError {
     /// An activity cancellation with optional details.
     #[error("Activity cancelled")]
     Cancelled {
-        /// Optional cancellation details payload.
-        details: Option<Payload>,
+        /// Optional cancellation details.
+        details: Option<FailurePayloads>,
     },
 }
 
@@ -1071,7 +1071,7 @@ mod tests {
             GenericPayloadConverter, PayloadConverter, SerializationContext,
             SerializationContextData,
         },
-        protos::temporal::api::common::v1::Payload,
+        protos::temporal::api::{common::v1::Payload, failure::v1::failure::FailureInfo},
     };
 
     struct AlwaysFailsSerialize;

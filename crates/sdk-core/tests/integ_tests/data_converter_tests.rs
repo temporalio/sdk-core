@@ -111,13 +111,9 @@ impl FailurePayloadActivities {
                 _ = ticker.tick() => ctx.record_heartbeat(vec![]),
             }
         }
-        Err(ActivityError::Cancelled {
-            details: Some(
-                TrackedValue::new("codec-cancel-details".to_string())
-                    .as_json_payload()
-                    .map_err(ActivityError::from)?,
-            ),
-        })
+        Err(ActivityError::cancelled_with_details(
+            "codec-cancel-details".to_string(),
+        ))
     }
 
     #[activity]
@@ -255,10 +251,10 @@ impl CancellationDetailsWorkflow {
             panic!("expected cancelled failure, got {err:?}");
         };
         let details = cancelled
-            .details::<TrackedValue>()
+            .details::<String>()
             .expect("cancellation details should decode")
             .expect("cancellation details should be present");
-        Ok(TrackedWrapper(details))
+        Ok(TrackedWrapper(TrackedValue::new(details)))
     }
 }
 
