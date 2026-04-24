@@ -8,8 +8,9 @@ use crate::{
     },
     grpc::WorkflowService,
 };
-use futures_util::stream::Stream;
+use futures_util::{stream, stream::Stream};
 use std::{
+    collections::VecDeque,
     fmt::Debug,
     marker::PhantomData,
     pin::Pin,
@@ -910,7 +911,7 @@ where
         opts: WorkflowFetchHistoryOptions,
     ) -> WorkflowHistoryStream
     where
-        CT: NamespacedClient,
+        CT: WorkflowService + NamespacedClient + 'static,
     {
         let run_id = self.info.run_id.clone().unwrap_or_default();
         self.fetch_history_stream_for_run(&run_id, &opts)
@@ -967,8 +968,80 @@ where
         &self,
         run_id: &str,
         opts: &WorkflowFetchHistoryOptions,
-    ) -> WorkflowHistoryStream {
-        todo!()
+    ) -> WorkflowHistoryStream
+    where
+        CT: WorkflowService + NamespacedClient + 'static,
+    {
+        let client = self.client.clone();
+        let workflow_id = self.info.workflow_id.clone();
+        let run_id = run_id.to_string();
+        let opts = opts.clone();
+
+        // State: (next_page_token, buffer, yielded_count, exhausted)
+        let initial_state = (Vec::new(), VecDeque::new(), 0, false);
+
+        let stream = stream::unfold(
+            initial_state,
+            move |(next_page_token, mut buffer, mut yielded, exhausted)| {
+                let mut client = client.clone();
+                let namespace = client.namespace();
+                let workflow_id = workflow_id.clone();
+                let run_id = run_id.clone();
+                let opts = opts.clone();
+
+                async move {
+                    if let Some(exec) = buffer.pop_front() {
+                        yielded += 1;
+                        return Some((Ok(exec), (next_page_token, buffer, yielded, exhausted)));
+                    }
+
+                    if exhausted {
+                        return None;
+                    }
+
+                    let response = WorkflowService::get_workflow_execution_history(
+                        &mut client,
+                        GetWorkflowExecutionHistoryRequest {
+                            namespace,
+                            execution: Some(ProtoWorkflowExecution {
+                                workflow_id,
+                                run_id,
+                            }),
+                            next_page_token: next_page_token.clone(),
+                            skip_archival: opts.skip_archival,
+                            wait_new_event: opts.wait_new_event,
+                            history_event_filter_type: opts.event_filter_type as i32,
+                            ..Default::default()
+                        }
+                        .into_request(),
+                    )
+                    .await;
+
+                    match response {
+                        Ok(resp) => {
+                            let resp = resp.into_inner();
+                            let new_exhausted = resp.next_page_token.is_empty();
+                            let new_token = resp.next_page_token;
+
+                            if let Some(history) = resp.history {
+                                buffer = history.events.into_iter().collect();
+                            }
+
+                            if let Some(event) = buffer.pop_front() {
+                                Some((Ok(event), (new_token, buffer, yielded, new_exhausted)))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => Some((
+                            Err(WorkflowInteractionError::from_status(e)),
+                            (next_page_token, buffer, yielded, true),
+                        )),
+                    }
+                }
+            },
+        );
+        WorkflowHistoryStream::new(Box::pin(stream))
     }
 }
 
