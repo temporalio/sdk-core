@@ -63,17 +63,10 @@ rstest = "0.26"
 
 [features]
 default = ["envconfig", "prometheus"]
-antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
-client-telemetry = ["temporalio-client/telemetry"]
-debug-plugin = ["temporalio-sdk-core/debug-plugin"]
 envconfig = ["temporalio-sdk-core/envconfig"]
-ephemeral-server = ["temporalio-sdk-core/ephemeral-server"]
-examples = ["serde/derive", "dep:serde_json"]
-history-builders = ["temporalio-sdk-core/history-builders"]
-otel = ["temporalio-sdk-core/otel"]
 prometheus = ["temporalio-sdk-core/prometheus"]
-serde-serialize = ["temporalio-common/serde_serialize"]
-test-utilities = ["temporalio-sdk-core/test-utilities"]
+otel = ["temporalio-sdk-core/otel"]
+examples = ["serde/derive", "dep:serde_json"]
 
 [dependencies.serde_json]
 version = "1"
