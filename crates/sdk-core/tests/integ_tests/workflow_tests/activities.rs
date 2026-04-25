@@ -40,7 +40,7 @@ use temporalio_common::{
         temporal::api::{
             common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
             enums::v1::{
-                ApplicationErrorCategory, CommandType, EventType, RetryState, TimeoutType,
+                CommandType, EventType, RetryState, TimeoutType,
             },
             failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
             sdk::v1::UserMetadata,

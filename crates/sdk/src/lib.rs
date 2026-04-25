@@ -618,13 +618,13 @@ impl Worker {
                      }| {
                         let wf_half = &*wf_half;
                         async move {
-                            let result = join_handle.await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                            let result = join_handle.await.map_err(anyhow::Error::new)?;
                             // Eviction is normal workflow lifecycle - workflows loop waiting for
                             // eviction after completion to manage cache cleanup
                             if let Err(e) = result
                                 && !matches!(e, WorkflowTermination::Evicted)
                             {
-                                return Err(anyhow::anyhow!("{e}"));
+                                return Err(anyhow::Error::new(e));
                             }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
