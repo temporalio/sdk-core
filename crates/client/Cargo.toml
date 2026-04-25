@@ -52,6 +52,7 @@ rand = "0.10"
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.3"
+default-features = false
 
 [dev-dependencies]
 assert_matches = "1"

@@ -46,10 +46,12 @@ default-features = false
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.3"
+default-features = false
 
 [dependencies.temporalio-client]
 path = "../client"
 version = "0.3"
+default-features = false
 
 [dependencies.temporalio-macros]
 path = "../macros"
@@ -60,9 +62,18 @@ futures = "0.3"
 rstest = "0.26"
 
 [features]
-default = []
+default = ["envconfig", "prometheus"]
 antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
+client-telemetry = ["temporalio-client/telemetry"]
+debug-plugin = ["temporalio-sdk-core/debug-plugin"]
+envconfig = ["temporalio-sdk-core/envconfig"]
+ephemeral-server = ["temporalio-sdk-core/ephemeral-server"]
 examples = ["serde/derive", "dep:serde_json"]
+history-builders = ["temporalio-sdk-core/history-builders"]
+otel = ["temporalio-sdk-core/otel"]
+prometheus = ["temporalio-sdk-core/prometheus"]
+serde-serialize = ["temporalio-common/serde_serialize"]
+test-utilities = ["temporalio-sdk-core/test-utilities"]
 
 [dependencies.serde_json]
 version = "1"

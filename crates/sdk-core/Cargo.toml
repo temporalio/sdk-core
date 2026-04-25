@@ -15,7 +15,9 @@ rust-version = "1.88.0" # due to cargo msrv find
 [lib]
 
 [features]
-default = []
+default = ["envconfig", "prometheus"]
+envconfig = ["temporalio-client/envconfig", "temporalio-common/envconfig"]
+prometheus = ["temporalio-common/prometheus"]
 otel = [
   "dep:opentelemetry",
   "dep:opentelemetry_sdk",
@@ -24,7 +26,13 @@ otel = [
 ]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
-test-utilities = ["dep:assert_matches", "dep:bimap"]
+history-builders = ["temporalio-common/history_builders"]
+test-utilities = [
+  "dep:assert_matches",
+  "dep:bimap",
+  "history-builders",
+  "temporalio-common/test-utilities",
+]
 antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
@@ -110,11 +118,13 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.3"
-features = ["core-based-sdk", "history_builders", "test-utilities"]
+default-features = false
+features = ["core-telemetry-bridge"]
 
 [dependencies.temporalio-client]
 path = "../client"
 version = "0.3"
+default-features = false
 features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
@@ -139,6 +149,9 @@ hyper-util = { version = "0.1", features = [
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
+temporalio-common = { path = "../common", version = "0.3", default-features = false, features = [
+  "test-utilities",
+] }
 tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",

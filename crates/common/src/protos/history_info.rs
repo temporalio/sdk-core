@@ -207,7 +207,7 @@ impl From<HistoryInfo> for GetWorkflowExecutionHistoryResponse {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "history_builders"))]
 mod tests {
     use crate::protos::{TestHistoryBuilder, temporal::api::enums::v1::EventType};
 
