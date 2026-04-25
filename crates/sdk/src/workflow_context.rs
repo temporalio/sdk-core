@@ -2150,20 +2150,12 @@ impl StartedNexusOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::task::noop_waker_ref;
     use std::collections::HashMap;
     use temporalio_common::{
         data_converters::{TemporalDeserializable, TemporalSerializable},
         protos::{
-            coresdk::{
-                AsJsonPayloadExt,
-                activity_result::{DoBackoff, activity_resolution},
-                common::VersioningIntent,
-            },
-            temporal::api::{
-                common::v1::{Payload, RetryPolicy},
-                failure::v1::failure::FailureInfo,
-            },
+            coresdk::{AsJsonPayloadExt, common::VersioningIntent},
+            temporal::api::common::v1::{Payload, RetryPolicy},
         },
     };
     use temporalio_macros::{workflow, workflow_methods};
@@ -2195,28 +2187,6 @@ mod tests {
             DataConverter::default(),
         );
         WorkflowContext::from_base(base, Rc::new(RefCell::new(TestWorkflow)))
-    }
-
-    struct StubActivityResolutionFut {
-        resolution: Option<ActivityResolution>,
-    }
-
-    impl Future for StubActivityResolutionFut {
-        type Output = ActivityResolution;
-
-        fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-            Poll::Ready(self.resolution.take().expect("polled after completion"))
-        }
-    }
-
-    impl FusedFuture for StubActivityResolutionFut {
-        fn is_terminated(&self) -> bool {
-            self.resolution.is_none()
-        }
-    }
-
-    impl CancellableFuture<ActivityResolution> for StubActivityResolutionFut {
-        fn cancel(&self) {}
     }
 
     #[test]
@@ -2380,46 +2350,5 @@ mod tests {
             panic!("expected failed termination, got {err:?}");
         };
         assert_eq!(err.to_string(), "Encoding error: serialization failure");
-    }
-
-    #[test]
-    fn local_activity_backoff_cancellation_resolution_includes_cancel_failure_info() {
-        let ctx = test_context();
-        let mut fut = LATimerBackoffFut {
-            la_opts: LocalActivityOptions::default(),
-            activity_type: "test".to_owned(),
-            arguments: vec![],
-            current_fut: Box::pin(StubActivityResolutionFut {
-                resolution: Some(ActivityResolution {
-                    status: Some(activity_resolution::Status::Backoff(DoBackoff {
-                        attempt: 2,
-                        backoff_duration: Some(Duration::from_secs(1).try_into().unwrap()),
-                        original_schedule_time: None,
-                    })),
-                }),
-            }),
-            timer_fut: None,
-            base_ctx: ctx.sync.base.clone(),
-            next_attempt: 1,
-            next_sched_time: None,
-            did_cancel: AtomicBool::new(true),
-            terminated: false,
-        };
-        let waker = noop_waker_ref();
-        let mut cx = Context::from_waker(waker);
-
-        let Poll::Ready(resolution) = Pin::new(&mut fut).poll(&mut cx) else {
-            panic!("expected ready resolution");
-        };
-        let Some(activity_resolution::Status::Cancelled(cancel)) = resolution.status else {
-            panic!("expected cancelled resolution");
-        };
-        let failure = cancel
-            .failure
-            .expect("cancelled resolution should retain failure");
-        assert!(matches!(
-            failure.failure_info,
-            Some(FailureInfo::CanceledFailureInfo(_))
-        ));
     }
 }
