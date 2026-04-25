@@ -10,7 +10,7 @@ repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 exclude = ["machine_coverage/*"]
-rust-version = "1.88.0" # due to cargo msrv find
+rust-version = "1.88.0"                                    # due to cargo msrv find
 
 [lib]
 
@@ -26,13 +26,7 @@ otel = [
 ]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
-history-builders = ["temporalio-common/history_builders"]
-test-utilities = [
-  "dep:assert_matches",
-  "dep:bimap",
-  "history-builders",
-  "temporalio-common/test-utilities",
-]
+test-utilities = ["dep:assert_matches", "dep:bimap"]
 antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
@@ -103,7 +97,12 @@ tokio = { version = "1.47", default-features = false, features = [
 ] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = { version = "0.1", default-features = false }
-tonic = { workspace = true, default-features = false, features = ["tls-ring", "tls-native-roots", "transport", "codegen"] }
+tonic = { workspace = true, default-features = false, features = [
+  "tls-ring",
+  "tls-native-roots",
+  "transport",
+  "codegen",
+] }
 tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.18", default-features = false, features = ["v4"] }
@@ -119,7 +118,7 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 path = "../common"
 version = "0.3"
 default-features = false
-features = ["core-telemetry-bridge"]
+features = ["core-telemetry-bridge", "history_builders"]
 
 [dependencies.temporalio-client]
 path = "../client"

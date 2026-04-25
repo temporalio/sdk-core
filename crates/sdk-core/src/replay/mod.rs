@@ -16,10 +16,8 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll},
 };
-pub use temporalio_common::protos::HistoryInfo;
-#[cfg(any(feature = "history-builders", test))]
 pub use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_wes_attribs,
+    DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
 };
 use temporalio_common::{
     protos::{
@@ -142,7 +140,6 @@ impl HistoryForReplay {
         }
     }
 }
-#[cfg(any(feature = "history-builders", test))]
 impl From<TestHistoryBuilder> for HistoryForReplay {
     fn from(thb: TestHistoryBuilder) -> Self {
         thb.get_full_history_info().unwrap().into()

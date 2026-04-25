@@ -122,8 +122,6 @@ temporalio-sdk = { version = "0.3", default-features = false, features = ["envco
   `temporalio_common::telemetry` for serving SDK metrics from a HTTP endpoint.
 - `otel` - optional. Adds the OpenTelemetry metrics exporter in `temporalio_common::telemetry` for
   sending SDK metrics to an OpenTelemetry collector.
-- `ephemeral-server` - optional. Adds `temporalio_sdk_core::ephemeral_server`, which can download
-  and run a local Temporal server for development and tests.
 
 ## Workflows in detail
 

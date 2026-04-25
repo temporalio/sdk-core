@@ -11,6 +11,7 @@ pub mod utilities;
 pub mod canned_histories;
 #[cfg(feature = "history_builders")]
 mod history_builder;
+#[cfg(feature = "history_builders")]
 mod history_info;
 mod task_token;
 #[cfg(feature = "test-utilities")]
@@ -23,6 +24,7 @@ pub use history_builder::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
     default_wes_attribs,
 };
+#[cfg(feature = "history_builders")]
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
