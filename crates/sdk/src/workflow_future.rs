@@ -165,10 +165,7 @@ pub(crate) struct WorkflowFuture {
 
 impl WorkflowFuture {
     fn workflow_message_to_failure(&self, message: String) -> Failure {
-        self.data_converter.to_failure(
-            &SerializationContextData::Workflow,
-            OutgoingError::Workflow(anyhow!(message).into()),
-        )
+        self.workflow_error_to_failure(anyhow!(message).into())
     }
 
     fn workflow_error_to_failure(&self, error: crate::workflows::WorkflowError) -> Failure {
