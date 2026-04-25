@@ -1,6 +1,6 @@
 [package]
 name = "temporalio-client"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 license-file = { workspace = true }
@@ -51,7 +51,7 @@ rand = "0.10"
 
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies]
 assert_matches = "1"
