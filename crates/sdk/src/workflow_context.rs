@@ -104,7 +104,6 @@ struct WorkflowContextInner {
     shared: RefCell<WorkflowContextSharedData>,
     seq_nums: RefCell<WfCtxProtectedDat>,
     data_converter: DataConverter,
-    payload_converter: PayloadConverter,
     state_mutated: Cell<bool>,
 }
 
@@ -295,7 +294,6 @@ impl BaseWorkflowContext {
         init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
         data_converter: DataConverter,
-        payload_converter: PayloadConverter,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
         let (chan, rx) = std::sync::mpsc::channel();
@@ -325,7 +323,6 @@ impl BaseWorkflowContext {
                         next_nexus_op_sequence_number: 1,
                     }),
                     data_converter,
-                    payload_converter,
                     state_mutated: Cell::new(false),
                 }),
             },
@@ -414,11 +411,12 @@ impl BaseWorkflowContext {
         AD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
@@ -451,11 +449,12 @@ impl BaseWorkflowContext {
         AD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
@@ -478,11 +477,12 @@ impl BaseWorkflowContext {
         WD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ChildWorkflowStartFut::eager(e.into());
@@ -512,7 +512,6 @@ impl BaseWorkflowContext {
             result_future: result_cmd,
             base_ctx: self.clone(),
             data_converter: self.inner.data_converter.clone(),
-            payload_converter: self.inner.payload_converter.clone(),
         };
 
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
@@ -662,7 +661,7 @@ impl<W> SyncWorkflowContext<W> {
 
     /// Returns the [PayloadConverter] currently used by the worker running this workflow.
     pub fn payload_converter(&self) -> &PayloadConverter {
-        &self.base.inner.payload_converter
+        self.base.inner.data_converter.payload_converter()
     }
 
     /// Return various information that the workflow was initialized with. Will eventually become
@@ -700,7 +699,7 @@ impl<W> SyncWorkflowContext<W> {
     where
         W: crate::workflows::WorkflowImplementation,
     {
-        let pc = &self.base.inner.payload_converter;
+        let pc = self.base.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: pc,
@@ -1608,7 +1607,6 @@ pub(crate) struct ChildWfCommon {
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
     data_converter: DataConverter,
-    payload_converter: PayloadConverter,
 }
 
 /// Child workflow in pending state. Internal type used during the start handshake;
@@ -1961,11 +1959,12 @@ where
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<Result<(), ChildWorkflowSignalError>> + 'static {
+        let payload_converter = self.common.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.common.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.common.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalChildFut::eager(e.into());
@@ -2010,16 +2009,12 @@ impl ExternalWorkflowHandle {
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let payload_converter = self.base_ctx.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.base_ctx.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self
-            .base_ctx
-            .inner
-            .payload_converter
-            .to_payloads(&ctx, &input)
-        {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalExternalFut::SerializationError(Some(e));
@@ -2198,7 +2193,6 @@ mod tests {
             init,
             cancelled_rx,
             DataConverter::default(),
-            PayloadConverter::default(),
         );
         WorkflowContext::from_base(base, Rc::new(RefCell::new(TestWorkflow)))
     }
@@ -2375,7 +2369,6 @@ mod tests {
             init,
             cancelled_rx,
             DataConverter::default(),
-            PayloadConverter::default(),
         );
         let ctx = WorkflowContext::from_base(base, Rc::new(RefCell::new(FailingWorkflow)));
 

@@ -95,11 +95,10 @@ impl WorkflowFunction {
             init_workflow_job,
             cancel_rx,
             data_converter.clone(),
-            payload_converter.clone(),
         );
 
         // Create the workflow execution using the factory
-        let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
+        let execution = (self.factory)(input, payload_converter, base_ctx.clone())
             .context("Failed to create workflow execution")?;
 
         let wake_tracking = if detect_nondeterministic {
