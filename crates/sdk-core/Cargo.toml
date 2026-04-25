@@ -10,7 +10,8 @@ repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 exclude = ["machine_coverage/*"]
-rust-version = "1.88.0"                                    # due to cargo msrv find
+# due to cargo msrv find
+rust-version = "1.88.0"
 
 [lib]
 
