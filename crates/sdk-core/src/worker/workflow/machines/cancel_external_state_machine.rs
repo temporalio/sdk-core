@@ -63,6 +63,7 @@ pub(super) fn new_external_cancel(
     let mut s = CancelExternalMachine::from_parts(Created {}.into(), SharedState { seq });
     OnEventWrapper::on_event_mut(&mut s, CancelExternalMachineEvents::Schedule)
         .expect("Scheduling cancel external wf command doesn't fail");
+    #[allow(deprecated)]
     let cmd_attrs = command::Attributes::RequestCancelExternalWorkflowExecutionCommandAttributes(
         RequestCancelExternalWorkflowExecutionCommandAttributes {
             namespace: workflow_execution.namespace,

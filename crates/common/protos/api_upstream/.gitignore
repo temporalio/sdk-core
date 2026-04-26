@@ -3,3 +3,5 @@
 /.vscode
 /.stamp
 *~
+*.swp
+*.swo

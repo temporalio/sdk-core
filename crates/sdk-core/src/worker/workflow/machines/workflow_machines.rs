@@ -1205,6 +1205,7 @@ impl WorkflowMachines {
                     ProtoCmdAttrs::RequestCancelExternalWorkflowExecutionCommandAttributes(
                         attrs,
                     ) => {
+                        #[allow(deprecated)]
                         let we = NamespacedWorkflowExecution {
                             namespace: attrs.namespace,
                             workflow_id: attrs.workflow_id,

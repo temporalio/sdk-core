@@ -89,6 +89,7 @@ pub(super) fn new_external_signal(
         SignalExternalMachine::from_parts(Created {}.into(), SharedState { seq: attrs.seq });
     OnEventWrapper::on_event_mut(&mut s, SignalExternalMachineEvents::Schedule)
         .expect("Scheduling signal external wf command doesn't fail");
+    #[allow(deprecated)]
     let cmd_attrs = command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(
         SignalExternalWorkflowExecutionCommandAttributes {
             namespace: workflow_execution.namespace,
@@ -270,7 +271,10 @@ impl SignalExternalMachine {
                         failure: Some(Failure {
                             message: SIG_CANCEL_MSG.to_string(),
                             failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                CanceledFailureInfo { details: None },
+                                CanceledFailureInfo {
+                                    details: None,
+                                    identity: Default::default(),
+                                },
                             )),
                             ..Default::default()
                         }),

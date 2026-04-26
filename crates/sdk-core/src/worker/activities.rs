@@ -393,6 +393,7 @@ impl WorkerActivityTasks {
                                 failure_info:
                                     Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                                         details,
+                                        ..
                                     })),
                                 ..
                             }) = failure
