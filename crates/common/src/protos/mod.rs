@@ -315,6 +315,7 @@ pub mod coresdk {
                         failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                             CanceledFailureInfo {
                                 details: details.map(Into::into),
+                                identity: Default::default(),
                             },
                         )),
                         ..Default::default()
@@ -1654,6 +1655,11 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.batch.v1");
             }
         }
+        pub mod callback {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.callback.v1");
+            }
+        }
         pub mod command {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
@@ -2180,6 +2186,11 @@ pub mod temporal {
                 }
             }
         }
+        pub mod compute {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.compute.v1");
+            }
+        }
         pub mod deployment {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.deployment.v1");
@@ -2414,6 +2425,8 @@ pub mod temporal {
                                 Attributes::WorkflowExecutionPausedEventAttributes(_) => true,
                                 // !! Ignorable !!
                                 Attributes::WorkflowExecutionUnpausedEventAttributes(_) => true,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionTimeSkippingTransitionedEventAttributes(_) => true,
                             }
                         } else {
                             false
@@ -2495,6 +2508,7 @@ pub mod temporal {
                             Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => { EventType::NexusOperationCancelRequestFailed }
                             Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
                             Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
+                            Attributes::WorkflowExecutionTimeSkippingTransitionedEventAttributes(_) => { EventType::WorkflowExecutionTimeSkippingTransitioned }
                         }
                     }
                 }

@@ -1,12 +1,12 @@
 [package]
 name = "temporalio-client"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 license-file = { workspace = true }
 description = "Clients for interacting with Temporal"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 readme = "README.md"
@@ -51,7 +51,7 @@ rand = "0.10"
 
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies]
 assert_matches = "1"

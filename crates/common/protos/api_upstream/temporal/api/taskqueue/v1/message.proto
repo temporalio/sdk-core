@@ -33,7 +33,6 @@ message TaskQueueMetadata {
     google.protobuf.DoubleValue max_tasks_per_second = 1;
 }
 
-// Experimental. Worker Deployments are experimental and might significantly change in the future.
 message TaskQueueVersioningInfo {
     // Specifies which Deployment Version should receive new workflow executions and tasks of
     // existing unversioned or AutoUpgrade workflows.
@@ -302,6 +301,11 @@ message TimestampedBuildIdAssignmentRule {
 message TimestampedCompatibleBuildIdRedirectRule {
     CompatibleBuildIdRedirectRule rule = 1;
     google.protobuf.Timestamp create_time = 2;
+}
+
+message PollerGroupInfo {
+  string id = 1;
+  float weight = 2;
 }
 
 // Attached to task responses to give hints to the SDK about how it may adjust its number of

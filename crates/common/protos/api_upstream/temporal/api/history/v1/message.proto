@@ -196,12 +196,29 @@ message WorkflowExecutionStartedEventAttributes {
     // Used internally by the server during continue-as-new and retry.
     // Should not be read or interpreted by SDKs.
     DeclinedTargetVersionUpgrade declined_target_version_upgrade = 40;
+
+    // Initial time-skipping configuration for this workflow execution, recorded at start time.
+    // This may have been set explicitly via the start workflow request, or propagated from a
+    // parent/previous execution.
+    //
+    // The configuration may be updated after start via UpdateWorkflowExecutionOptions, which
+    // will be reflected in the WorkflowExecutionOptionsUpdatedEvent.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 41;
+
+    // The time skipped by the previous execution that started this workflow.
+    // It can happen in cases of child workflows and continue-as-new workflows.
+    google.protobuf.Duration initial_skipped_duration = 42;
 }
 
 // Wrapper for a target deployment version that the SDK declined to upgrade to.
 // See declined_target_version_upgrade on WorkflowExecutionStartedEventAttributes.
 message DeclinedTargetVersionUpgrade {
     temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 1;
+    // Revision number of the task queue routing config at the time the target
+    // was declined. If an incoming target's revision is <= this value, it is
+    // not newer and is not used for deciding whether or not to suppress the
+    // upgrade signal.
+    int64 revision_number = 2;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -348,16 +365,13 @@ message WorkflowTaskCompletedEventAttributes {
     temporal.api.enums.v1.VersioningBehavior versioning_behavior = 8;
     // The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
     // is set. This value updates workflow execution's `versioning_info.version`.
-    // Experimental. Worker Deployments are experimental and might significantly change in the future.
     // Deprecated. Replaced with `deployment_version`.
     string worker_deployment_version = 9 [deprecated = true];
     // The name of Worker Deployment that completed this task. Must be set if `versioning_behavior`
     // is set. This value updates workflow execution's `worker_deployment_name`.
-    // Experimental. Worker Deployments are experimental and might significantly change in the future.
     string worker_deployment_name = 10;
     // The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
     // is set. This value updates workflow execution's `versioning_info.deployment_version`.
-    // Experimental. Worker Deployments are experimental and might significantly change in the future.
     temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 11;
 }
 
@@ -607,6 +621,9 @@ message WorkflowExecutionSignaledEventAttributes {
     bool skip_generate_workflow_task = 5 [deprecated = true];
     // When signal origin is a workflow execution, this field is set.
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 6;
+    // The request ID of the Signal request, used by the server to attach this to
+    // the correct Event ID when generating link.
+    string request_id = 7;
 }
 
 message WorkflowExecutionTerminatedEventAttributes {
@@ -757,6 +774,12 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     bool inherit_build_id = 19 [deprecated = true];
     // Priority metadata
     temporal.api.common.v1.Priority priority = 20;
+
+    // The propagated time-skipping configuration for the child workflow.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 21;
+
+    // Propagate the duration skipped to the child workflow.
+    google.protobuf.Duration initial_skipped_duration = 30;
 }
 
 message StartChildWorkflowExecutionFailedEventAttributes {
@@ -873,6 +896,8 @@ message WorkflowExecutionOptionsUpdatedEventAttributes {
     // Priority override upserted in this event. Represents the full priority; not just partial fields.
     // Ignored if nil.
     temporal.api.common.v1.Priority priority = 6;
+    // If set, the time-skipping configuration was changed. Contains the full updated configuration.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 7;
 }
 
 // Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes
@@ -965,6 +990,23 @@ message WorkflowExecutionUnpausedEventAttributes {
     string request_id = 3;
 }
 
+// Attributes for an event indicating that time skipping state changed for a workflow execution,
+// either time was advanced or time skipping was disabled automatically due to a bound being reached.
+// The worker_may_ignore field in HistoryEvent should always be set true for this event.
+message WorkflowExecutionTimeSkippingTransitionedEventAttributes {
+
+    // The virtual time after time skipping was applied.
+    google.protobuf.Timestamp target_time = 1;
+
+    // when true, time skipping was disabled automatically due to a bound being reached.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "after" is used to indicate temporal ordering. --)
+    bool disabled_after_bound = 2;
+
+    // The wall-clock time when the time-skipping state changed event was generated.
+    google.protobuf.Timestamp wall_clock_time = 3;
+}
+
 // Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command.
 message NexusOperationScheduledEventAttributes {
     // Endpoint name, must exist in the endpoint registry.
@@ -982,6 +1024,8 @@ message NexusOperationScheduledEventAttributes {
     // Calls are retried internally by the server.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    // (-- api-linter: core::0142::time-field-names=disabled
+    //     aip.dev/not-precedent: "timeout" is an acceptable suffix for duration fields in this API. --)
     google.protobuf.Duration schedule_to_close_timeout = 5;
     // Header to attach to the Nexus request. Note these headers are not the same as Temporal headers on internal
     // activities and child workflows, these are transmitted to Nexus operations that may be external and are not
@@ -1134,8 +1178,10 @@ message HistoryEvent {
     //  * timer_started_event_attributes - summary represents an identifier for the timer for use by
     //    user interfaces.
     temporal.api.sdk.v1.UserMetadata user_metadata = 301;
-    // Links associated with the event.
+    // Links to related entities, such as the entity that started this event's workflow.
     repeated temporal.api.common.v1.Link links = 302;
+    // Server-computed authenticated caller identity associated with this event.
+    temporal.api.common.v1.Principal principal = 303;
     // The event details. The type must match that in `event_type`.
     oneof attributes {
         WorkflowExecutionStartedEventAttributes workflow_execution_started_event_attributes = 6;
@@ -1197,6 +1243,7 @@ message HistoryEvent {
         NexusOperationCancelRequestFailedEventAttributes nexus_operation_cancel_request_failed_event_attributes = 62;
         WorkflowExecutionPausedEventAttributes workflow_execution_paused_event_attributes = 63;
         WorkflowExecutionUnpausedEventAttributes workflow_execution_unpaused_event_attributes = 64;
+        WorkflowExecutionTimeSkippingTransitionedEventAttributes workflow_execution_time_skipping_transitioned_event_attributes = 65;
     }
 }
 

@@ -436,6 +436,8 @@ fn create_test_nexus_task(
             )),
         }),
         poller_scaling_decision: None,
+        poller_group_id: Default::default(),
+        poller_group_infos: vec![],
     }
 }
 
@@ -1068,6 +1070,7 @@ async fn nexus_start_operation_failure_with_canceled_failure_info() {
                 message: "operation canceled".to_string(),
                 failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                     details: None,
+                    identity: Default::default(),
                 })),
                 ..Default::default()
             },
@@ -1147,6 +1150,7 @@ async fn nexus_start_operation_failure_with_invalid_failure_info(
 #[case::canceled_failure(
     FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
         details: None,
+        identity: Default::default(),
     }),
     NexusOperationErrorState::Canceled
 )]

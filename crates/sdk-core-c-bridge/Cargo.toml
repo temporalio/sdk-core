@@ -6,7 +6,7 @@ authors = ["Spencer Judge <spencer@temporal.io>"]
 license-file = { workspace = true }
 description = "C bridge for Temporal Core SDK"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 publish = false
@@ -41,16 +41,16 @@ xz2 = { version = "0.1", optional = true }
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.2"
+version = "0.3"
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
-version = "0.2"
+version = "0.3"
 features = ["ephemeral-server", "otel"]
 
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.2"
+version = "0.3"
 features = ["core-based-sdk", "otel"]
 
 [dev-dependencies]

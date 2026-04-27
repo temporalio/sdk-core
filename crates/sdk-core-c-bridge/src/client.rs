@@ -573,17 +573,44 @@ async fn call_workflow_service(
         "CountActivityExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_activity_executions)
         }
+        "CountNexusOperationExecutions" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                count_nexus_operation_executions
+            )
+        }
         "CountSchedules" => rpc_call_on_trait!(client, call, WorkflowService, count_schedules),
         "CountWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
         }
         "CreateSchedule" => rpc_call_on_trait!(client, call, WorkflowService, create_schedule),
+        "CreateWorkerDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, create_worker_deployment)
+        }
+        "CreateWorkerDeploymentVersion" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                create_worker_deployment_version
+            )
+        }
         "CreateWorkflowRule" => {
             rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
         }
         "DeleteSchedule" => rpc_call_on_trait!(client, call, WorkflowService, delete_schedule),
         "DeleteActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
+        }
+        "DeleteNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                delete_nexus_operation_execution
+            )
         }
         "DeleteWorkerDeployment" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_worker_deployment)
@@ -616,6 +643,14 @@ async fn call_workflow_service(
         }
         "DescribeNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_namespace)
+        }
+        "DescribeNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                describe_nexus_operation_execution
+            )
         }
         "DescribeSchedule" => rpc_call_on_trait!(client, call, WorkflowService, describe_schedule),
         "DescribeTaskQueue" => {
@@ -708,6 +743,14 @@ async fn call_workflow_service(
         ),
         "ListDeployments" => rpc_call_on_trait!(client, call, WorkflowService, list_deployments),
         "ListNamespaces" => rpc_call_on_trait!(client, call, WorkflowService, list_namespaces),
+        "ListNexusOperationExecutions" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                list_nexus_operation_executions
+            )
+        }
         "ListOpenWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, list_open_workflow_executions)
         }
@@ -738,6 +781,14 @@ async fn call_workflow_service(
         }
         "PollActivityTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_activity_task_queue)
+        }
+        "PollNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                poll_nexus_operation_execution
+            )
         }
         "PollNexusTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_nexus_task_queue)
@@ -778,6 +829,14 @@ async fn call_workflow_service(
                 call,
                 WorkflowService,
                 request_cancel_activity_execution
+            )
+        }
+        "RequestCancelNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_nexus_operation_execution
             )
         }
         "RequestCancelWorkflowExecution" => {
@@ -895,6 +954,14 @@ async fn call_workflow_service(
         "StartBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
         }
+        "StartNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                start_nexus_operation_execution
+            )
+        }
         "StartWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
         }
@@ -903,6 +970,14 @@ async fn call_workflow_service(
         }
         "TerminateActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_activity_execution)
+        }
+        "TerminateNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                terminate_nexus_operation_execution
+            )
         }
         "TerminateWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_workflow_execution)
@@ -926,6 +1001,14 @@ async fn call_workflow_service(
         }
         "UpdateWorkerConfig" => {
             rpc_call_on_trait!(client, call, WorkflowService, update_worker_config)
+        }
+        "UpdateWorkerDeploymentVersionComputeConfig" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                update_worker_deployment_version_compute_config
+            )
         }
         "UpdateWorkerDeploymentVersionMetadata" => {
             rpc_call_on_trait!(
@@ -958,6 +1041,14 @@ async fn call_workflow_service(
                 call,
                 WorkflowService,
                 update_worker_build_id_compatibility
+            )
+        }
+        "ValidateWorkerDeploymentVersionComputeConfig" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                validate_worker_deployment_version_compute_config
             )
         }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),

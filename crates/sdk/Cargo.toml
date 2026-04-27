@@ -1,12 +1,12 @@
 [package]
 name = "temporalio-sdk"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Spencer Judge <spencer@temporal.io>"]
 license-file = { workspace = true }
 description = "Temporal Rust SDK"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 readme = "README.md"
@@ -40,20 +40,20 @@ uuid = { version = "1.18", default-features = false, features = ["v4"] }
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
-version = "0.2"
+version = "0.3"
 default-features = false
 
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.2"
+version = "0.3"
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.2"
+version = "0.3"
 
 [dependencies.temporalio-macros]
 path = "../macros"
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies]
 futures = "0.3"

@@ -1,12 +1,12 @@
 [package]
 name = "temporalio-sdk-core"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 edition = "2024"
 license-file = { workspace = true }
 description = "Library for building new Temporal SDKs"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 exclude = ["machine_coverage/*"]
@@ -109,17 +109,17 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 # 1st party local deps
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.2"
+version = "0.3"
 features = ["core-based-sdk", "history_builders", "test-utilities"]
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.2"
+version = "0.3"
 features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
 path = "../macros"
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies]
 assert_matches = "1.5"

@@ -240,10 +240,35 @@ message Link {
         string job_id = 1;
     }
 
+    // A link to an activity.
+    message Activity {
+        string namespace = 1;
+        string activity_id = 2;
+        string run_id = 3;
+    }
+
+    // A link to a standalone Nexus operation.
+    message NexusOperation {
+        string namespace = 1;
+        string operation_id = 2;
+        string run_id = 3;
+    }
+
     oneof variant {
         WorkflowEvent workflow_event = 1;
         BatchJob batch_job = 2;
+        Activity activity = 3;
+        NexusOperation nexus_operation = 4;
     }
+}
+
+// Principal is an authenticated caller identity computed by the server from trusted
+// authentication context.
+message Principal {
+    // Low-cardinality category of the principal (e.g., "jwt", "users").
+    string type = 1;
+    // Identifier within that category (e.g., sub JWT claim, email address).
+    string name = 2;
 }
 
 // Priority contains metadata that controls relative ordering of task processing
@@ -345,4 +370,15 @@ message WorkerSelector {
         // Worker instance key to which the command should be sent.
         string worker_instance_key = 1;
     }
+}
+
+// When starting an execution with a conflict policy that uses an existing execution and there is already an existing
+// running execution, OnConflictOptions defines actions to be taken on the existing running execution.
+message OnConflictOptions {
+    // Attaches the request ID to the running execution.
+    bool attach_request_id = 1;
+    // Attaches the completion callbacks to the running execution.
+    bool attach_completion_callbacks = 2;
+    // Attaches the links to the running execution.
+    bool attach_links = 3;
 }
