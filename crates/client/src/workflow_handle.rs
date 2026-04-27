@@ -892,7 +892,7 @@ where
         let workflow_id = self.info.workflow_id.clone();
         let run_id = run_id.to_string();
 
-        // State: (next_page_token, buffer, yielded_count, exhausted)
+        // State: (next_page_token, buffer, exhausted)
         let initial_state = (Vec::new(), VecDeque::new(), false);
 
         let stream = stream::unfold(
