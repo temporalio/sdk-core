@@ -23,7 +23,6 @@ use temporalio_client::{
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
-        DEFAULT_ACTIVITY_TYPE, canned_histories,
         coresdk::{
             ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
             activity_result::ActivityExecutionResult,
@@ -43,7 +42,6 @@ use temporalio_common::{
             history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
             query::v1::WorkflowQuery,
         },
-        test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -55,11 +53,14 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::{
     PollError, TunerHolder, prost_dur,
-    replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
+    replay::{
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder,
+        canned_histories, default_wes_attribs,
+    },
     test_help::{
         LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
-        build_mock_pollers, hist_to_poll_resp, mock_worker, mock_worker_client,
-        single_hist_mock_sg,
+        build_mock_pollers, hist_to_poll_resp, mock_worker, mock_worker_client, query_ok,
+        schedule_local_activity_cmd, single_hist_mock_sg, start_timer_cmd,
     },
 };
 use tokio::{join, select, sync::Barrier};

@@ -13,7 +13,7 @@ use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
+        VERSION_SEARCH_ATTR_KEY,
         constants::PATCH_MARKER_NAME,
         coresdk::{
             AsJsonPayloadExt, FromJsonPayloadExt,
@@ -42,7 +42,10 @@ use temporalio_sdk::{
     ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::{CoreInternalFlags, MockPollCfg, ResponseType},
+};
 use tokio::{join, sync::Notify};
 
 const MY_PATCH_ID: &str = "integ_test_change_name";

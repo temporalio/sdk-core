@@ -40,9 +40,7 @@ use temporalio_client::{
 };
 use temporalio_common::{
     data_converters::RawValue,
-    prost_dur,
     protos::{
-        DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::{
             ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
             activity_result::ActivityExecutionResult,
@@ -61,7 +59,6 @@ use temporalio_common::{
             sdk::v1::UserMetadata,
             workflowservice::v1::ResetStickyTaskQueueRequest,
         },
-        test_utils::schedule_activity_cmd,
     },
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
@@ -71,9 +68,11 @@ use temporalio_sdk::{
     interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, PollError, PollerBehavior, TunerHolder, WorkflowErrorType,
-    replay::HistoryForReplay,
-    test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
+    CoreRuntime, PollError, PollerBehavior, TunerHolder, WorkflowErrorType, prost_dur,
+    replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, canned_histories},
+    test_help::{
+        MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown, schedule_activity_cmd,
+    },
 };
 use tokio::{join, sync::Notify, time::sleep};
 use tonic::IntoRequest;

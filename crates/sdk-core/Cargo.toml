@@ -110,7 +110,7 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.3"
-features = ["core-based-sdk", "history_builders", "test-utilities"]
+features = ["core-based-sdk"]
 
 [dependencies.temporalio-client]
 path = "../client"
