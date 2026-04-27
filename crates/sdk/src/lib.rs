@@ -1079,17 +1079,19 @@ impl PrintablePanicType for EndPrintingAttempts {
 }
 
 #[cfg(test)]
-#[allow(dead_code, unreachable_pub)]
 mod tests {
     use super::*;
     use temporalio_macros::{activities, activity_definitions, workflow, workflow_methods};
 
     struct MyActivities {}
 
+    struct SharedActivities;
     #[activity_definitions]
-    trait SharedActivities {
+    impl SharedActivities {
         #[activity(name = "shared-greet")]
-        fn greet(name: String) -> String;
+        fn greet(name: String) -> Result<String, ActivityError> {
+            unimplemented!()
+        }
     }
 
     #[activities]
@@ -1130,7 +1132,12 @@ mod tests {
             ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
         );
         wf_ctx.start_activity(
-            shared_activities::greet,
+            SharedActivities::greet,
+            "Hi".to_owned(),
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+        );
+        wf_ctx.start_activity(
+            MyActivities::greet,
             "Hi".to_owned(),
             ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
         );
