@@ -8,7 +8,7 @@ use crate::{
     },
     grpc::WorkflowService,
 };
-use futures_util::{stream, stream::Stream};
+use futures_util::{TryStreamExt, stream, stream::Stream};
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -31,10 +31,7 @@ use temporalio_common::{
             common::v1::{Payload, Payloads, WorkflowExecution as ProtoWorkflowExecution},
             enums::v1::{HistoryEventFilterType, UpdateWorkflowExecutionLifecycleStage},
             failure::v1::Failure,
-            history::{
-                self,
-                v1::{HistoryEvent, history_event::Attributes},
-            },
+            history::v1::{HistoryEvent, history_event::Attributes},
             query::v1::WorkflowQuery,
             sdk::v1::UserMetadata,
             update::{self, v1::WaitPolicy},
@@ -282,48 +279,26 @@ impl WorkflowExecutionDescription {
     }
 }
 
-/// Workflow execution history returned by `WorkflowHandle::fetch_history`.
-#[derive(Debug, Clone)]
+/// Workflow execution history, lazily fetched as a stream from the server.
+/// Use `into_events` to collect all events at once, or consume as a `stream`.
 pub struct WorkflowHistory {
-    events: Vec<HistoryEvent>,
-}
-impl From<WorkflowHistory> for history::v1::History {
-    fn from(h: WorkflowHistory) -> Self {
-        Self { events: h.events }
-    }
-}
-
-impl WorkflowHistory {
-    fn new(events: Vec<HistoryEvent>) -> Self {
-        Self { events }
-    }
-
-    /// The history events.
-    pub fn events(&self) -> &[HistoryEvent] {
-        &self.events
-    }
-
-    /// Consume the history and return the events.
-    pub fn into_events(self) -> Vec<HistoryEvent> {
-        self.events
-    }
-}
-
-/// A stream of history events from a workflow execution.
-/// Internally paginates through results from the server.
-pub struct WorkflowHistoryStream {
     inner: Pin<Box<dyn Stream<Item = Result<HistoryEvent, WorkflowInteractionError>> + Send>>,
 }
 
-impl WorkflowHistoryStream {
+impl WorkflowHistory {
     fn new(
         inner: Pin<Box<dyn Stream<Item = Result<HistoryEvent, WorkflowInteractionError>> + Send>>,
     ) -> Self {
         Self { inner }
     }
+
+    /// Consume the stream and collect all events into a Vec
+    pub async fn into_events(self) -> Result<Vec<HistoryEvent>, WorkflowInteractionError> {
+        self.inner.try_collect().await
+    }
 }
 
-impl Stream for WorkflowHistoryStream {
+impl Stream for WorkflowHistory {
     type Item = Result<HistoryEvent, WorkflowInteractionError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.inner.as_mut().poll_next(cx)
@@ -489,7 +464,7 @@ where
         opts: WorkflowGetResultOptions,
     ) -> Result<W::Output, WorkflowGetResultError>
     where
-        CT: WorkflowService + NamespacedClient + Clone,
+        CT: WorkflowService + NamespacedClient + Clone + 'static,
     {
         let raw = self.get_result_raw(opts).await?;
         match raw {
@@ -514,7 +489,7 @@ where
         opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>
     where
-        CT: WorkflowService + NamespacedClient + Clone,
+        CT: WorkflowService + NamespacedClient + Clone + 'static,
     {
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
         let fetch_opts = WorkflowFetchHistoryOptions::builder()
@@ -524,8 +499,8 @@ where
             .build();
 
         loop {
-            let history = self.fetch_history_for_run(&run_id, &fetch_opts).await?;
-            let mut events = history.into_events();
+            let history = self.fetch_history_for_run(&run_id, fetch_opts.clone());
+            let mut events = history.into_events().await?;
 
             if events.is_empty() {
                 continue;
@@ -892,96 +867,37 @@ where
             .await
             .map_err(WorkflowInteractionError::from)
     }
-    /// Fetch workflow execution history.
-    pub async fn fetch_history(
-        &self,
-        opts: WorkflowFetchHistoryOptions,
-    ) -> Result<WorkflowHistory, WorkflowInteractionError>
-    where
-        CT: NamespacedClient,
-    {
-        let run_id = self.info.run_id.clone().unwrap_or_default();
-        self.fetch_history_for_run(&run_id, &opts).await
-    }
 
     /// Fetch workflow execution history as a lazy stream
-    pub fn fetch_history_stream(
+    pub fn fetch_history(
         &self,
         opts: WorkflowFetchHistoryOptions,
-    ) -> WorkflowHistoryStream
+    ) -> WorkflowHistory
     where
-        CT: WorkflowService + NamespacedClient + 'static,
+        CT: NamespacedClient + 'static,
     {
         let run_id = self.info.run_id.clone().unwrap_or_default();
-        self.fetch_history_stream_for_run(&run_id, &opts)
+        self.fetch_history_for_run(&run_id, opts)
     }
 
-    /// Fetch history for a specific run_id, handling pagination.
-    async fn fetch_history_for_run(
+    fn fetch_history_for_run(
         &self,
         run_id: &str,
-        opts: &WorkflowFetchHistoryOptions,
-    ) -> Result<WorkflowHistory, WorkflowInteractionError>
+        opts: WorkflowFetchHistoryOptions,
+    ) -> WorkflowHistory
     where
-        CT: NamespacedClient,
-    {
-        let mut all_events = Vec::new();
-        let mut next_page_token = vec![];
-
-        loop {
-            let response = WorkflowService::get_workflow_execution_history(
-                &mut self.client.clone(),
-                GetWorkflowExecutionHistoryRequest {
-                    namespace: self.client.namespace(),
-                    execution: Some(ProtoWorkflowExecution {
-                        workflow_id: self.info.workflow_id.clone(),
-                        run_id: run_id.to_string(),
-                    }),
-                    next_page_token: next_page_token.clone(),
-                    skip_archival: opts.skip_archival,
-                    wait_new_event: opts.wait_new_event,
-                    history_event_filter_type: opts.event_filter_type as i32,
-                    ..Default::default()
-                }
-                .into_request(),
-            )
-            .await
-            .map_err(WorkflowInteractionError::from_status)?
-            .into_inner();
-
-            if let Some(history) = response.history {
-                all_events.extend(history.events);
-            }
-
-            if response.next_page_token.is_empty() {
-                break;
-            }
-            next_page_token = response.next_page_token;
-        }
-
-        Ok(WorkflowHistory::new(all_events))
-    }
-
-    /// Fetch history for a specific run_id, handling pagination as a lazy stream
-    fn fetch_history_stream_for_run(
-        &self,
-        run_id: &str,
-        opts: &WorkflowFetchHistoryOptions,
-    ) -> WorkflowHistoryStream
-    where
-        CT: WorkflowService + NamespacedClient + 'static,
+        CT: NamespacedClient + 'static,
     {
         let client = self.client.clone();
         let workflow_id = self.info.workflow_id.clone();
         let run_id = run_id.to_string();
-        let opts = opts.clone();
 
         // State: (next_page_token, buffer, yielded_count, exhausted)
-        let initial_state = (Vec::new(), VecDeque::new(), 0, false);
+        let initial_state = (Vec::new(), VecDeque::new(), false);
 
         let stream = stream::unfold(
             initial_state,
-            move |(next_page_token, mut buffer, mut yielded, exhausted)| {
+            move |(next_page_token, mut buffer, exhausted)| {
                 let mut client = client.clone();
                 let namespace = client.namespace();
                 let workflow_id = workflow_id.clone();
@@ -990,8 +906,7 @@ where
 
                 async move {
                     if let Some(exec) = buffer.pop_front() {
-                        yielded += 1;
-                        return Some((Ok(exec), (next_page_token, buffer, yielded, exhausted)));
+                        return Some((Ok(exec), (next_page_token, buffer, exhausted)));
                     }
 
                     if exhausted {
@@ -1027,20 +942,20 @@ where
                             }
 
                             if let Some(event) = buffer.pop_front() {
-                                Some((Ok(event), (new_token, buffer, yielded, new_exhausted)))
+                                Some((Ok(event), (new_token, buffer, new_exhausted)))
                             } else {
                                 None
                             }
                         }
                         Err(e) => Some((
                             Err(WorkflowInteractionError::from_status(e)),
-                            (next_page_token, buffer, yielded, true),
+                            (next_page_token, buffer, true),
                         )),
                     }
                 }
             },
         );
-        WorkflowHistoryStream::new(Box::pin(stream))
+        WorkflowHistory::new(Box::pin(stream))
     }
 }
 
