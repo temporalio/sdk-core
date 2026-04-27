@@ -2463,7 +2463,7 @@ async fn core_internal_flags() {
                 .iter()
                 .copied()
                 .collect::<HashSet<_>>(),
-            CoreInternalFlags::all_except_too_high()
+            CoreInternalFlags::all_except_unknown()
                 .map(|f| f as u32)
                 .collect()
         );
