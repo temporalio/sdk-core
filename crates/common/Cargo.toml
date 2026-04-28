@@ -14,7 +14,7 @@ exclude = ["protos/*/.github/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-history_builders = ["rand"]
+history_builders = ["dep:rand"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 prometheus = [
   "dep:prometheus",
@@ -26,12 +26,8 @@ prometheus = [
 envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
 test-utilities = ["history_builders"]
-core-based-sdk = [
-  "prometheus",
-  "envconfig",
-  "dep:ringbuf",
-  "dep:futures-channel",
-]
+core-telemetry-bridge = ["dep:ringbuf", "dep:futures-channel"]
+core-based-sdk = ["core-telemetry-bridge", "prometheus", "envconfig"]
 
 [dependencies]
 anyhow = "1.0"
@@ -85,7 +81,10 @@ tokio = { version = "1.47", default-features = false, features = [
   "rt",
 ], optional = true }
 toml = { version = "1.0", optional = true }
-tonic = { workspace = true, default-features = false, features = ["transport", "codegen"] }
+tonic = { workspace = true, default-features = false, features = [
+  "transport",
+  "codegen",
+] }
 tonic-prost = { workspace = true }
 tracing = "0.1"
 # TODO [rust-sdk-branch]: Is it reasonable to make this optional?
