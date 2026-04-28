@@ -21,7 +21,6 @@ use temporalio_client::{
 };
 use temporalio_common::{
     data_converters::RawValue,
-    prost_dur,
     protos::{
         coresdk::{
             ActivityTaskCompletion,
@@ -73,7 +72,7 @@ use temporalio_sdk_core::{
     CoreRuntime, FixedSizeSlotSupplier, PollError, PollerBehavior, SlotKind, SlotMarkUsedContext,
     SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
     TokioRuntimeBuilder, TunerBuilder, WorkerConfig, WorkerVersioningStrategy, WorkflowSlotKind,
-    init_worker,
+    init_worker, prost_dur,
     replay::TestHistoryBuilder,
     test_help::{
         MockPollCfg, ResponseType, TemporalMeter, WorkerExt, WorkerTestHelpers, build_mock_pollers,

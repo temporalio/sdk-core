@@ -27,6 +27,9 @@ otel = [
 ]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
+# Exposes mocks and helpers used by sdk-core's own integration tests, benches,
+# and the `histfetch` binary. Not part of the public API surface; downstream
+# crates should not enable this feature.
 test-utilities = ["dep:assert_matches", "dep:bimap"]
 antithesis_assertions = ["dep:antithesis_sdk"]
 
@@ -119,7 +122,7 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 path = "../common"
 version = "0.3"
 default-features = false
-features = ["core-telemetry-bridge", "history_builders"]
+features = ["core-telemetry-bridge"]
 
 [dependencies.temporalio-client]
 path = "../client"
@@ -149,9 +152,7 @@ hyper-util = { version = "0.1", features = [
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
-temporalio-common = { path = "../common", version = "0.3", default-features = false, features = [
-  "test-utilities",
-] }
+temporalio-common = { path = "../common", version = "0.3", default-features = false }
 tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",

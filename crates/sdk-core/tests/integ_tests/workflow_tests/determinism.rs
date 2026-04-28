@@ -14,7 +14,6 @@ use temporalio_common::{
     UntypedWorkflow,
     data_converters::RawValue,
     protos::{
-        TestHistoryBuilder, canned_histories,
         coresdk::AsJsonPayloadExt,
         temporal::api::{
             enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -30,7 +29,7 @@ use temporalio_sdk::{
     workflows,
 };
 use temporalio_sdk_core::{
-    replay::DEFAULT_WORKFLOW_TYPE,
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
     test_help::{CoreInternalFlags, MockPollCfg, ResponseType, mock_worker_client},
 };
 
@@ -335,7 +334,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
     } else {
         canned_histories::single_activity("1")
     };
-    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks], &[]);
     t.set_wf_input((id_change, local_act).as_json_payload().unwrap());
     let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
@@ -418,7 +417,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let mut t = canned_histories::single_child_workflow("1");
-    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks], &[]);
     t.set_wf_input(id_change.as_json_payload().unwrap());
     let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(

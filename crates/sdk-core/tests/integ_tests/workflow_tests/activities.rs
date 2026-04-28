@@ -16,32 +16,27 @@ use temporalio_client::{
     ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
     WorkflowTerminateOptions,
 };
-use temporalio_common::{
-    prost_dur,
-    protos::{
-        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
-        coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
-            IntoPayloadsExt,
-            activity_result::{
-                self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
-            },
-            activity_task::activity_task as act_task,
-            workflow_activation::{
-                FireTimer, ResolveActivity, WorkflowActivationJob, workflow_activation_job,
-            },
-            workflow_commands::{
-                ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
-            },
-            workflow_completion::WorkflowActivationCompletion,
+use temporalio_common::protos::{
+    coresdk::{
+        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+        IntoPayloadsExt,
+        activity_result::{
+            self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
         },
-        temporal::api::{
-            common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
-            enums::v1::{CommandType, EventType, RetryState},
-            failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
-            sdk::v1::UserMetadata,
+        activity_task::activity_task as act_task,
+        workflow_activation::{
+            FireTimer, ResolveActivity, WorkflowActivationJob, workflow_activation_job,
         },
-        test_utils::schedule_activity_cmd,
+        workflow_commands::{
+            ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
+        },
+        workflow_completion::WorkflowActivationCompletion,
+    },
+    temporal::api::{
+        common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
+        enums::v1::{CommandType, EventType, RetryState},
+        failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
+        sdk::v1::UserMetadata,
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -50,10 +45,11 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
-    PollerBehavior,
+    PollerBehavior, prost_dur,
+    replay::{DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
     test_help::{
         MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown,
-        mock_worker_client,
+        mock_worker_client, schedule_activity_cmd,
     },
 };
 use tokio::{join, sync::Semaphore, time::sleep};

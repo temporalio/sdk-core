@@ -1,8 +1,10 @@
 use crate::{
     CompleteNexusError, PollError, prost_dur,
+    replay::canned_histories,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
-        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
+        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, start_timer_cmd,
+        test_worker_cfg,
     },
     worker::{
         self, PollerBehavior,
@@ -24,7 +26,6 @@ use temporalio_common::protos::temporal::api::{
 };
 use temporalio_common::{
     protos::{
-        canned_histories,
         coresdk::{
             ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
@@ -55,7 +56,6 @@ use temporalio_common::{
                 RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
             },
         },
-        test_utils::start_timer_cmd,
     },
     worker::WorkerTaskTypes,
 };

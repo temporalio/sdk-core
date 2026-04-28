@@ -19,7 +19,6 @@ use temporalio_client::{
 };
 use temporalio_common::{
     data_converters::RawValue,
-    prost_dur,
     protos::{
         coresdk::{
             ActivityTaskCompletion,
@@ -37,7 +36,6 @@ use temporalio_common::{
             enums::v1::{EventType, ResetReapplyType},
             workflowservice::v1::{ResetStickyTaskQueueRequest, ResetWorkflowExecutionRequest},
         },
-        test_utils::start_timer_cmd,
     },
     worker::WorkerTaskTypes,
 };
@@ -48,9 +46,9 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
-    Worker,
+    Worker, prost_dur,
     replay::HistoryForReplay,
-    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown, start_timer_cmd},
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;

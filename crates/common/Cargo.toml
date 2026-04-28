@@ -14,7 +14,6 @@ exclude = ["protos/*/.github/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-history_builders = ["dep:rand"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 prometheus = [
   "dep:prometheus",
@@ -25,7 +24,6 @@ prometheus = [
 ]
 envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
-test-utilities = ["history_builders"]
 core-telemetry-bridge = ["dep:ringbuf", "dep:futures-channel"]
 core-based-sdk = ["core-telemetry-bridge", "prometheus", "envconfig"]
 
@@ -70,7 +68,6 @@ prometheus = { version = "0.14", optional = true, default-features = false }
 prost = { workspace = true }
 prost-wkt = "0.7"
 prost-types = { workspace = true }
-rand = { version = "0.10", optional = true }
 ringbuf = { version = "0.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { workspace = true }

@@ -4,7 +4,6 @@ use crate::common::build_fake_sdk;
 use serde::{Deserialize, Serialize};
 use std::{cell::Cell, collections::HashMap, future::poll_fn, task::Poll, time::Duration};
 use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::workflow_commands::query_result,
     temporal::api::{
         common::v1::WorkflowType,
@@ -16,8 +15,11 @@ use temporalio_common::protos::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
-use temporalio_sdk_core::test_help::{
-    LegacyQueryResult, MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::{
+        LegacyQueryResult, MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
+    },
 };
 
 /// A workflow that returns Pending on first poll and Ready on second poll.

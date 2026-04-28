@@ -6,26 +6,10 @@ pub mod constants;
 /// Utility functions for working with protobuf types.
 pub mod utilities;
 
-#[cfg(feature = "test-utilities")]
-/// Pre-built test histories for common workflow patterns.
-pub mod canned_histories;
-#[cfg(feature = "history_builders")]
-mod history_builder;
-#[cfg(feature = "history_builders")]
-mod history_info;
 mod task_token;
-#[cfg(feature = "test-utilities")]
-pub mod test_utils;
 
 use std::time::Duration;
 
-#[cfg(feature = "history_builders")]
-pub use history_builder::{
-    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
-    default_wes_attribs,
-};
-#[cfg(feature = "history_builders")]
-pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
 /// Payload metadata key that identifies the encoding format.
