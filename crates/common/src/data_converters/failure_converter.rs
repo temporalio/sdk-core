@@ -415,6 +415,7 @@ fn encode_outgoing_activity_error(
                 details: details
                     .map(|details| details.encode(payload_converter, context))
                     .transpose()?,
+                identity: Default::default(),
             })),
             ..Default::default()
         },
@@ -1269,6 +1270,7 @@ mod tests {
             message: "cancelled".to_owned(),
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                 details: Some(details.clone()),
+                identity: Default::default(),
             })),
             ..Default::default()
         };
