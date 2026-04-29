@@ -1,6 +1,6 @@
 [package]
 name = "temporalio-sdk-core"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 edition = "2024"
 license-file = { workspace = true }
@@ -120,19 +120,19 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
 # 1st party local deps
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.3"
+version = "0.4"
 default-features = false
 features = ["core-telemetry-bridge"]
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.3"
+version = "0.4"
 default-features = false
 features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
 path = "../macros"
-version = "0.3"
+version = "0.4"
 
 [dev-dependencies]
 assert_matches = "1.5"
@@ -152,7 +152,7 @@ hyper-util = { version = "0.1", features = [
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
-temporalio-common = { path = "../common", version = "0.3", default-features = false }
+temporalio-common = { path = "../common", version = "0.4", default-features = false }
 tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",
