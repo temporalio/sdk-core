@@ -38,7 +38,7 @@ use temporalio_common::{
             command::v1::{RecordMarkerCommandAttributes, command},
             common::v1::RetryPolicy,
             enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
-            failure::v1::{Failure, failure::FailureInfo},
+            failure::v1::Failure,
             history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
             query::v1::WorkflowQuery,
         },
@@ -46,8 +46,9 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityExecutionError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    WorkflowContext, WorkflowContextView, WorkflowResult, WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, ApplicationFailure, CancellableFuture,
+    LocalActivityOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
@@ -489,7 +490,9 @@ async fn cancel_after_act_starts(
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(100)) => {}
                     _ = ctx.cancelled() => {
-                        return Err(ActivityError::cancelled())
+                        return Err(ActivityError::cancelled_with_details(
+                            "cancel-after-start".to_string(),
+                        ))
                     }
                     _ = self.manual_cancel.cancelled() => {
                         return Ok(())
@@ -546,11 +549,18 @@ async fn cancel_after_act_starts(
             // This extra timer is here to ensure the presence of another WF task doesn't mess up
             // resolving the LA with cancel on replay
             ctx.timer(Duration::from_secs(1)).await;
-            let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
+            let err = la.await.unwrap_err();
+            let ActivityExecutionError::Cancelled(cancel_err) = err else {
+                panic!("expected cancellation failure, got {err:?}");
+            };
+            let expected_details = if bo_dur == Duration::from_secs(1)
+                && cancel_type == ActivityCancellationType::WaitCancellationCompleted
+            {
+                Some("cancel-after-start".to_string())
+            } else {
+                None
+            };
+            assert_eq!(cancel_err.details::<String>().unwrap(), expected_details);
             Ok(())
         }
     }
@@ -640,14 +650,11 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 )
                 .await;
             let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed(f) = &err {
-                assert_eq!(
-                    f.is_timeout(),
-                    Some(TimeoutType::try_from(timeout_type).unwrap())
-                );
-            } else {
-                return Err(anyhow!("expected Failed, got {err:?}").into());
-            }
+            let timeout = err.as_timeout().unwrap();
+            assert_eq!(
+                timeout.timeout_type(),
+                TimeoutType::try_from(timeout_type).unwrap()
+            );
             Ok(())
         }
     }
@@ -718,11 +725,13 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
                 )
                 .await;
             let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed(f) = &err {
-                assert_eq!(f.is_timeout(), Some(TimeoutType::ScheduleToClose));
-            } else {
+            let ActivityExecutionError::Failed(failure) = &err else {
                 panic!("expected Failed, got {err:?}");
-            }
+            };
+            let Some(timeout) = failure.as_timeout() else {
+                panic!("expected timeout cause, got {failure:?}");
+            };
+            assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToClose);
             Ok(())
         }
     }
@@ -1989,11 +1998,14 @@ async fn test_schedule_to_start_timeout() {
                 .await;
             assert!(la_res.is_err());
             if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::ScheduleToStart));
-                assert_matches!(fail.failure_info, Some(FailureInfo::ActivityFailureInfo(_)));
-                assert_matches!(
-                    fail.cause.as_ref().unwrap().failure_info,
-                    Some(FailureInfo::TimeoutFailureInfo(_))
+                let Some(timeout) = fail.as_timeout() else {
+                    panic!("expected timeout cause, got {fail:?}");
+                };
+                assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToStart);
+                assert_eq!(
+                    fail.activity_type()
+                        .map(|activity_type| activity_type.name.as_str()),
+                    Some(StdActivities::echo.name())
                 );
             }
             Ok(())
@@ -2087,7 +2099,10 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             if is_sched_to_start {
                 assert!(la_res.is_ok());
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::ScheduleToClose));
+                let Some(timeout) = fail.as_timeout() else {
+                    panic!("expected timeout cause, got {fail:?}");
+                };
+                assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToClose);
             }
             Ok(())
         }
@@ -2157,7 +2172,10 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
             if la_completes {
                 assert!(la_res.is_ok(), "Result should be ok was {la_res:?}");
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::StartToClose));
+                let Some(timeout) = fail.as_timeout() else {
+                    panic!("expected timeout cause, got {fail:?}");
+                };
+                assert_eq!(timeout.timeout_type(), TimeoutType::StartToClose);
             }
             Ok(())
         }
@@ -2696,10 +2714,11 @@ async fn local_act_retry_explicit_delay() {
             // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
             let last_attempt = self.attempts.fetch_add(1, Ordering::Relaxed);
             if 0 == last_attempt {
-                Err(ActivityError::Retryable {
-                    source: anyhow!("Explicit backoff error").into_boxed_dyn_error(),
-                    explicit_delay: Some(Duration::from_millis(300)),
-                })
+                Err(ActivityError::application(
+                    ApplicationFailure::builder(anyhow!("Explicit backoff error"))
+                        .next_retry_delay(Duration::from_millis(300))
+                        .build(),
+                ))
             } else if 2 == last_attempt {
                 Ok(())
             } else {
@@ -3273,21 +3292,11 @@ async fn cancel_after_act_starts_canned(
             ctx.timer(Duration::from_secs(1)).await;
             la.cancel();
             ctx.timer(Duration::from_secs(1)).await;
-            let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
-            if let Err(ActivityExecutionError::Cancelled(rfail)) = resolution {
-                assert_matches!(
-                    rfail.failure_info,
-                    Some(FailureInfo::ActivityFailureInfo(_))
-                );
-                assert_matches!(
-                    rfail.cause.unwrap().failure_info,
-                    Some(FailureInfo::CanceledFailureInfo(_))
-                );
-            }
+            let err = la.await.unwrap_err();
+            let ActivityExecutionError::Cancelled(cancel_err) = err else {
+                panic!("expected cancelled error, got {err:?}");
+            };
+            assert!(cancel_err.raw_details().is_none());
             Ok(())
         }
     }

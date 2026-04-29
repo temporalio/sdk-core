@@ -291,8 +291,7 @@ work.
 
 Activities return `Result<T, ActivityError>` with the following error types:
 
-- **`ActivityError::Retryable`** - Transient failure, will be retried
-- **`ActivityError::NonRetryable`** - Permanent failure, will not be retried
+- **`ActivityError::Application`** - Application failure metadata is carried by `ApplicationFailure`
 - **`ActivityError::Cancelled`** - Activity was cancelled
 - **`ActivityError::WillCompleteAsync`** - Activity will complete asynchronously
 
@@ -461,3 +460,18 @@ while let Some(result) = stream.next().await {
     println!("Workflow: {} ({})", execution.id(), execution.workflow_type());
 }
 ```
+
+## Failure Conversion and Error Wrapping
+
+The default failure converter preserves Temporal failure types when errors cross workflow or
+activity boundaries.
+
+This matters when Rust error propagation wraps Temporal SDK error types, e.g. `anyhow::Error`.
+When an `ApplicationFailure` is created from an error whose source is a known Temporal SDK error, the
+converter skips the outer error for the failure cause and encodes the known Temporal error
+directly. The application failure's own message and metadata are still preserved.
+
+This keeps the Rust SDK's `Failure`s aligned with other Temporal SDKs: SDK error types
+remain represented as Temporal failure types, while unknown Rust error types are encoded as
+application failures.
+

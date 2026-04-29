@@ -1012,7 +1012,7 @@ impl WorkflowMethodsDefinition {
                 let result = #run_call;
                 match result {
                     Ok(value) => ::temporalio_sdk::workflows::serialize_result(value, &ctx.payload_converter())
-                        .map_err(|e| ::temporalio_sdk::WorkflowTermination::failed(e)),
+                        .map_err(|e| ::temporalio_sdk::WorkflowTermination::from(::anyhow::Error::new(e))),
                     Err(e) => Err(e),
                 }
             }.boxed_local()

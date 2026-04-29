@@ -15,14 +15,14 @@ use crate::{
     },
 };
 use futures_util::{stream, stream::StreamExt};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::{cell::RefCell, collections::HashMap, time::Duration};
-use temporalio_common::protos::temporal::api::{
-    namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
-    workflowservice::v1::DescribeNamespaceResponse,
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 use temporalio_common::{
     protos::{
@@ -41,6 +41,7 @@ use temporalio_common::{
                 ApplicationFailureInfo, CanceledFailureInfo, Failure, NexusHandlerFailureInfo,
                 TimeoutFailureInfo, failure::FailureInfo,
             },
+            namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
             nexus::{
                 self,
                 v1::{
@@ -50,17 +51,17 @@ use temporalio_common::{
                 },
             },
             workflowservice::v1::{
-                PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
-                PollWorkflowTaskQueueResponse, RespondActivityTaskCompletedResponse,
-                RespondNexusTaskCompletedResponse, RespondNexusTaskFailedResponse,
-                RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
+                DescribeNamespaceResponse, PollActivityTaskQueueResponse,
+                PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+                RespondActivityTaskCompletedResponse, RespondNexusTaskCompletedResponse,
+                RespondNexusTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
+                ShutdownWorkerResponse,
             },
         },
     },
     worker::WorkerTaskTypes,
 };
-use tokio::sync::Notify;
-use tokio::sync::{Barrier, watch};
+use tokio::sync::{Barrier, Notify, watch};
 use uuid::Uuid;
 
 #[tokio::test]

@@ -135,8 +135,8 @@ async fn async_activity_completions(
                     let err = activity_result.expect_err("expected failure");
                     if let ActivityExecutionError::Failed(failure) = err {
                         // The failure we sent is wrapped as the cause
-                        let cause = failure.cause.expect("cause should be present");
-                        assert_eq!(cause.message, "async failure reason");
+                        let cause = failure.cause().expect("cause should be present");
+                        assert_eq!(cause.failure().message, "async failure reason");
                     } else {
                         panic!("expected Failed, got {err:?}");
                     }

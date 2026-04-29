@@ -35,12 +35,18 @@ use std::{
 use temporalio_common::{
     ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
+        ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint,
+        ChildWorkflowSignalDecodeHint, ChildWorkflowStartDecodeHint, DataConverter,
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData, TemporalDeserializable,
     },
+    error::{
+        ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError,
+        ChildWorkflowStartError,
+    },
     protos::{
         coresdk::{
-            activity_result::{ActivityResolution, activity_resolution},
+            activity_result::{ActivityResolution, Cancellation, activity_resolution},
             child_workflow::ChildWorkflowResult,
             common::NamespacedWorkflowExecution,
             nexus::NexusOperationResult,
@@ -57,7 +63,7 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::{Memo, Payload, SearchAttributes},
-            failure::v1::Failure,
+            failure::v1::{CanceledFailureInfo, Failure, failure::FailureInfo},
             sdk::v1::UserMetadata,
         },
     },
@@ -97,7 +103,7 @@ struct WorkflowContextInner {
     am_cancelled: watch::Receiver<Option<String>>,
     shared: RefCell<WorkflowContextSharedData>,
     seq_nums: RefCell<WfCtxProtectedDat>,
-    payload_converter: PayloadConverter,
+    data_converter: DataConverter,
     state_mutated: Cell<bool>,
 }
 
@@ -278,68 +284,6 @@ impl WorkflowContextView {
     }
 }
 
-/// Error type for activity execution outcomes.
-#[derive(Debug, thiserror::Error)]
-pub enum ActivityExecutionError {
-    /// The activity failed with the given failure details.
-    #[error("Activity failed: {}", .0.message)]
-    Failed(Box<Failure>),
-    /// The activity was cancelled.
-    #[error("Activity cancelled: {}", .0.message)]
-    Cancelled(Box<Failure>),
-    // TODO: Timed out variant
-    /// Failed to serialize input or deserialize result payload.
-    #[error("Payload conversion failed: {0}")]
-    Serialization(#[from] PayloadConversionError),
-}
-
-impl ActivityExecutionError {
-    /// Returns true if this error represents a timeout.
-    pub fn is_timeout(&self) -> bool {
-        match self {
-            ActivityExecutionError::Failed(f) => f.is_timeout().is_some(),
-            _ => false,
-        }
-    }
-}
-
-/// Error returned when a child workflow execution fails.
-#[derive(Debug, thiserror::Error)]
-pub enum ChildWorkflowExecutionError {
-    /// The child workflow failed.
-    #[error("Child workflow failed: {}", .0.message)]
-    Failed(Box<Failure>),
-    /// The child workflow was cancelled.
-    #[error("Child workflow cancelled: {}", .0.message)]
-    Cancelled(Box<Failure>),
-    /// The child workflow failed to start (e.g., workflow ID already exists).
-    #[error(
-        "Child workflow start failed: workflow_id={workflow_id}, workflow_type={workflow_type}, cause={cause:?}"
-    )]
-    StartFailed {
-        /// The workflow ID that was requested.
-        workflow_id: String,
-        /// The workflow type that was requested.
-        workflow_type: String,
-        /// The cause of the start failure.
-        cause: StartChildWorkflowExecutionFailedCause,
-    },
-    /// Failed to serialize input or deserialize the child workflow result payload.
-    #[error("Payload conversion failed: {0}")]
-    Serialization(#[from] PayloadConversionError),
-}
-
-/// Error returned when signaling a child workflow fails.
-#[derive(Debug, thiserror::Error)]
-pub enum ChildWorkflowSignalError {
-    /// The signal delivery failed.
-    #[error("Child workflow signal failed: {}", .0.message)]
-    Failed(Box<Failure>),
-    /// Failed to serialize the signal input payload.
-    #[error("Signal payload conversion failed: {0}")]
-    Serialization(#[from] PayloadConversionError),
-}
-
 impl BaseWorkflowContext {
     /// Create a new base context, returning the context itself and a receiver which outputs commands
     /// sent from the workflow.
@@ -349,7 +293,7 @@ impl BaseWorkflowContext {
         run_id: String,
         init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
         let (chan, rx) = std::sync::mpsc::channel();
@@ -378,7 +322,7 @@ impl BaseWorkflowContext {
                         next_signal_external_wf_sequence_number: 1,
                         next_nexus_op_sequence_number: 1,
                     }),
-                    payload_converter,
+                    data_converter,
                     state_mutated: Cell::new(false),
                 }),
             },
@@ -467,11 +411,12 @@ impl BaseWorkflowContext {
         AD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
@@ -490,7 +435,7 @@ impl BaseWorkflowContext {
             }
             .into(),
         );
-        ActivityFut::running(cmd, self.inner.payload_converter.clone())
+        ActivityFut::running(cmd, self.inner.data_converter.clone())
     }
 
     /// Request to run a local activity
@@ -504,11 +449,12 @@ impl BaseWorkflowContext {
         AD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
@@ -516,7 +462,7 @@ impl BaseWorkflowContext {
         };
         ActivityFut::running(
             LATimerBackoffFut::new(AD::name().to_string(), payloads, opts, self.clone()),
-            self.inner.payload_converter.clone(),
+            self.inner.data_converter.clone(),
         )
     }
 
@@ -526,16 +472,17 @@ impl BaseWorkflowContext {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let payload_converter = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ChildWorkflowStartFut::eager(e.into());
@@ -564,7 +511,7 @@ impl BaseWorkflowContext {
             child_seq,
             result_future: result_cmd,
             base_ctx: self.clone(),
-            payload_converter: self.inner.payload_converter.clone(),
+            data_converter: self.inner.data_converter.clone(),
         };
 
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
@@ -714,7 +661,7 @@ impl<W> SyncWorkflowContext<W> {
 
     /// Returns the [PayloadConverter] currently used by the worker running this workflow.
     pub fn payload_converter(&self) -> &PayloadConverter {
-        &self.base.inner.payload_converter
+        self.base.inner.data_converter.payload_converter()
     }
 
     /// Return various information that the workflow was initialized with. Will eventually become
@@ -752,14 +699,14 @@ impl<W> SyncWorkflowContext<W> {
     where
         W: crate::workflows::WorkflowImplementation,
     {
-        let pc = &self.base.inner.payload_converter;
+        let pc = self.base.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: pc,
         };
         let arguments = pc
             .to_payloads(&ctx, input)
-            .map_err(WorkflowTermination::failed)?;
+            .map_err(WorkflowTermination::from)?;
         let workflow_type = self.workflow_initial_info().workflow_type.clone();
         let proto = opts.into_proto(workflow_type, arguments);
         Err(WorkflowTermination::continue_as_new(proto))
@@ -803,7 +750,7 @@ impl<W> SyncWorkflowContext<W> {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
@@ -1081,7 +1028,7 @@ impl<W> WorkflowContext<W> {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
@@ -1458,9 +1405,15 @@ impl Future for LATimerBackoffFut {
                     } else {
                         self.terminated = true;
                         Poll::Ready(ActivityResolution {
-                            status: Some(
-                                activity_resolution::Status::Cancelled(Default::default()),
-                            ),
+                            status: Some(activity_resolution::Status::Cancelled(Cancellation {
+                                failure: Some(Failure {
+                                    message: "Activity cancelled".to_owned(),
+                                    failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                        CanceledFailureInfo::default(),
+                                    )),
+                                    ..Default::default()
+                                }),
+                            })),
                         })
                     }
                 }
@@ -1477,7 +1430,15 @@ impl Future for LATimerBackoffFut {
             if self.did_cancel.load(Ordering::Acquire) {
                 self.terminated = true;
                 return Poll::Ready(ActivityResolution {
-                    status: Some(activity_resolution::Status::Cancelled(Default::default())),
+                    status: Some(activity_resolution::Status::Cancelled(Cancellation {
+                        failure: Some(Failure {
+                            message: "Activity cancelled".to_owned(),
+                            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                CanceledFailureInfo::default(),
+                            )),
+                            ..Default::default()
+                        }),
+                    })),
                 });
             }
 
@@ -1517,13 +1478,13 @@ impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
 enum ActivityFut<F, Output> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Option<ActivityExecutionError>,
+        error: Option<Box<ActivityExecutionError>>,
         _phantom: PhantomData<Output>,
     },
     /// Running activity that will deserialize output on completion.
     Running {
         inner: F,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         _phantom: PhantomData<Output>,
     },
     Terminated,
@@ -1532,15 +1493,15 @@ enum ActivityFut<F, Output> {
 impl<F, Output> ActivityFut<F, Output> {
     fn eager(err: ActivityExecutionError) -> Self {
         Self::Errored {
-            error: Some(err),
+            error: Some(Box::new(err)),
             _phantom: PhantomData,
         }
     }
 
-    fn running(inner: F, payload_converter: PayloadConverter) -> Self {
+    fn running(inner: F, data_converter: DataConverter) -> Self {
         Self::Running {
             inner,
-            payload_converter,
+            data_converter,
             _phantom: PhantomData,
         }
     }
@@ -1559,20 +1520,26 @@ where
         let this = self.get_mut();
         let poll = match this {
             ActivityFut::Errored { error, .. } => {
-                Poll::Ready(Err(error.take().expect("polled after completion")))
+                Poll::Ready(Err(*error.take().expect("polled after completion")))
             }
             ActivityFut::Running {
                 inner,
-                payload_converter,
+                data_converter,
                 ..
             } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(resolution) => Poll::Ready({
                     let status = resolution.status.ok_or_else(|| {
-                        ActivityExecutionError::Failed(Box::new(Failure {
-                            message: "Activity completed without a status".to_string(),
-                            ..Default::default()
-                        }))
+                        data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
+                                Failure {
+                                    message: "Activity completed without a status".to_string(),
+                                    ..Default::default()
+                                },
+                                ActivityExecutionDecodeHint { cancelled: false },
+                            )
+                            .expect("synthetic activity failure should decode")
                     })?;
 
                     match status {
@@ -1580,20 +1547,23 @@ where
                             let payload = success.result.unwrap_or_default();
                             let ctx = SerializationContext {
                                 data: &SerializationContextData::Workflow,
-                                converter: payload_converter,
+                                converter: data_converter.payload_converter(),
                             };
-                            payload_converter
+                            data_converter
+                                .payload_converter()
                                 .from_payload::<Output>(&ctx, payload)
                                 .map_err(ActivityExecutionError::Serialization)
                         }
-                        activity_resolution::Status::Failed(f) => Err(
-                            ActivityExecutionError::Failed(Box::new(f.failure.unwrap_or_default())),
-                        ),
-                        activity_resolution::Status::Cancelled(c) => {
-                            Err(ActivityExecutionError::Cancelled(Box::new(
-                                c.failure.unwrap_or_default(),
-                            )))
-                        }
+                        activity_resolution::Status::Failed(f) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            f.failure.unwrap_or_default(),
+                            ActivityExecutionDecodeHint { cancelled: false },
+                        )?),
+                        activity_resolution::Status::Cancelled(c) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            c.failure.unwrap_or_default(),
+                            ActivityExecutionDecodeHint { cancelled: true },
+                        )?),
                         activity_resolution::Status::Backoff(_) => {
                             panic!("DoBackoff should be handled by LATimerBackoffFut")
                         }
@@ -1636,7 +1606,7 @@ pub(crate) struct ChildWfCommon {
     child_seq: u32,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
-    payload_converter: PayloadConverter,
+    data_converter: DataConverter,
 }
 
 /// Child workflow in pending state. Internal type used during the start handshake;
@@ -1665,7 +1635,7 @@ pub struct StartedChildWorkflow<WD: WorkflowDefinition> {
 enum ChildWorkflowFut<F, Output> {
     Running {
         inner: F,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         _phantom: PhantomData<Output>,
     },
     Terminated,
@@ -1685,39 +1655,48 @@ where
         let poll = match this {
             ChildWorkflowFut::Running {
                 inner,
-                payload_converter,
+                data_converter,
                 ..
             } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => Poll::Ready({
                     use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
                     let status = result.status.ok_or_else(|| {
-                        ChildWorkflowExecutionError::Failed(Box::new(Failure {
-                            message: "Child workflow completed without a status".to_string(),
-                            ..Default::default()
-                        }))
+                        data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
+                                Failure {
+                                    message: "Child workflow completed without a status"
+                                        .to_string(),
+                                    ..Default::default()
+                                },
+                                ChildWorkflowExecutionDecodeHint,
+                            )
+                            .expect("synthetic child workflow failure should decode")
                     })?;
                     match status {
                         child_workflow_result::Status::Completed(success) => {
                             let payloads = success.result.into_iter().collect();
                             let ctx = SerializationContext {
                                 data: &SerializationContextData::Workflow,
-                                converter: payload_converter,
+                                converter: data_converter.payload_converter(),
                             };
-                            payload_converter
+                            data_converter
+                                .payload_converter()
                                 .from_payloads::<Output>(&ctx, payloads)
                                 .map_err(ChildWorkflowExecutionError::Serialization)
                         }
-                        child_workflow_result::Status::Failed(f) => {
-                            Err(ChildWorkflowExecutionError::Failed(Box::new(
-                                f.failure.unwrap_or_default(),
-                            )))
-                        }
-                        child_workflow_result::Status::Cancelled(c) => {
-                            Err(ChildWorkflowExecutionError::Cancelled(Box::new(
+                        child_workflow_result::Status::Failed(f) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            f.failure.unwrap_or_default(),
+                            ChildWorkflowExecutionDecodeHint,
+                        )?),
+                        child_workflow_result::Status::Cancelled(c) => Err(data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
                                 c.failure.unwrap_or_default(),
-                            )))
-                        }
+                                ChildWorkflowExecutionDecodeHint,
+                            )?),
                     }
                 }),
             },
@@ -1771,7 +1750,7 @@ where
 enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Option<ChildWorkflowExecutionError>,
+        error: Option<Box<ChildWorkflowStartError>>,
         _phantom: PhantomData<WD>,
     },
     Running(F),
@@ -1779,9 +1758,9 @@ enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
 }
 
 impl<F, WD: WorkflowDefinition> ChildWorkflowStartFut<F, WD> {
-    fn eager(err: ChildWorkflowExecutionError) -> Self {
+    fn eager(err: ChildWorkflowStartError) -> Self {
         Self::Errored {
-            error: Some(err),
+            error: Some(Box::new(err)),
             _phantom: PhantomData,
         }
     }
@@ -1794,13 +1773,13 @@ where
     F: Future<Output = PendingChildWorkflow<WD>> + Unpin,
     WD: WorkflowDefinition,
 {
-    type Output = Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>;
+    type Output = Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let poll = match this {
             ChildWorkflowStartFut::Errored { error, .. } => {
-                Poll::Ready(Err(error.take().expect("polled after completion")))
+                Poll::Ready(Err(*error.take().expect("polled after completion")))
             }
             ChildWorkflowStartFut::Running(inner) => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
@@ -1811,7 +1790,7 @@ where
                         _phantom: PhantomData,
                     }),
                     ChildWorkflowStartStatus::Failed(f) => {
-                        Err(ChildWorkflowExecutionError::StartFailed {
+                        Err(ChildWorkflowStartError::StartFailed {
                             workflow_id: f.workflow_id,
                             workflow_type: f.workflow_type,
                             cause: StartChildWorkflowExecutionFailedCause::try_from(f.cause)
@@ -1819,9 +1798,11 @@ where
                         })
                     }
                     ChildWorkflowStartStatus::Cancelled(c) => {
-                        Err(ChildWorkflowExecutionError::Cancelled(Box::new(
+                        Err(pending.common.data_converter.to_error(
+                            &SerializationContextData::Workflow,
                             c.failure.unwrap_or_default(),
-                        )))
+                            ChildWorkflowStartDecodeHint,
+                        )?)
                     }
                 }),
             },
@@ -1844,7 +1825,7 @@ where
     }
 }
 
-impl<F, WD> CancellableFuture<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+impl<F, WD> CancellableFuture<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     for ChildWorkflowStartFut<F, WD>
 where
     F: CancellableFutureWithReason<PendingChildWorkflow<WD>> + Unpin,
@@ -1857,8 +1838,7 @@ where
     }
 }
 
-impl<F, WD>
-    CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+impl<F, WD> CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     for ChildWorkflowStartFut<F, WD>
 where
     F: CancellableFutureWithReason<PendingChildWorkflow<WD>> + Unpin,
@@ -1878,7 +1858,10 @@ enum SignalChildFut<F> {
     Errored {
         error: Option<ChildWorkflowSignalError>,
     },
-    Running(F),
+    Running {
+        inner: F,
+        data_converter: DataConverter,
+    },
     Terminated,
 }
 
@@ -1902,12 +1885,17 @@ where
             SignalChildFut::Errored { error } => {
                 Poll::Ready(Err(error.take().expect("polled after completion")))
             }
-            SignalChildFut::Running(inner) => match Pin::new(inner).poll(cx) {
+            SignalChildFut::Running {
+                inner,
+                data_converter,
+            } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
-                Poll::Ready(Err(failure)) => {
-                    Poll::Ready(Err(ChildWorkflowSignalError::Failed(Box::new(failure))))
-                }
+                Poll::Ready(Err(failure)) => Poll::Ready(Err(data_converter.to_error(
+                    &SerializationContextData::Workflow,
+                    failure,
+                    ChildWorkflowSignalDecodeHint,
+                )?)),
             },
             SignalChildFut::Terminated => panic!("polled after termination"),
         };
@@ -1932,7 +1920,7 @@ where
     F: CancellableFuture<SignalExternalWfResult> + Unpin,
 {
     fn cancel(&self) {
-        if let SignalChildFut::Running(inner) = self {
+        if let SignalChildFut::Running { inner, .. } = self {
             inner.cancel()
         }
     }
@@ -1949,7 +1937,7 @@ where
     ) -> impl CancellableFutureWithReason<Result<WD::Output, ChildWorkflowExecutionError>> {
         ChildWorkflowFut::Running {
             inner: self.common.result_future,
-            payload_converter: self.common.payload_converter,
+            data_converter: self.common.data_converter,
             _phantom: PhantomData,
         }
     }
@@ -1971,11 +1959,12 @@ where
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<Result<(), ChildWorkflowSignalError>> + 'static {
+        let payload_converter = self.common.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.common.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self.common.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalChildFut::eager(e.into());
@@ -1983,7 +1972,10 @@ where
         };
         let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        SignalChildFut::Running(self.common.base_ctx.clone().send_signal_wf(target, signal))
+        SignalChildFut::Running {
+            inner: self.common.base_ctx.clone().send_signal_wf(target, signal),
+            data_converter: self.common.data_converter.clone(),
+        }
     }
 }
 
@@ -2017,16 +2009,12 @@ impl ExternalWorkflowHandle {
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let payload_converter = self.base_ctx.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.base_ctx.inner.payload_converter,
+            converter: payload_converter,
         };
-        let payloads = match self
-            .base_ctx
-            .inner
-            .payload_converter
-            .to_payloads(&ctx, &input)
-        {
+        let payloads = match payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalExternalFut::SerializationError(Some(e));
@@ -2196,7 +2184,7 @@ mod tests {
             "run-id".to_string(),
             init,
             cancelled_rx,
-            PayloadConverter::default(),
+            DataConverter::default(),
         );
         WorkflowContext::from_base(base, Rc::new(RefCell::new(TestWorkflow)))
     }
@@ -2350,7 +2338,7 @@ mod tests {
             "run-id".to_string(),
             init,
             cancelled_rx,
-            PayloadConverter::default(),
+            DataConverter::default(),
         );
         let ctx = WorkflowContext::from_base(base, Rc::new(RefCell::new(FailingWorkflow)));
 

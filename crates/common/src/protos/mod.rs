@@ -167,6 +167,14 @@ pub mod coresdk {
                 }
             }
 
+            pub fn cancel(fail: APIFailure) -> Self {
+                Self {
+                    status: Some(aer::Status::Cancelled(Cancellation {
+                        failure: Some(fail),
+                    })),
+                }
+            }
+
             pub const fn will_complete_async() -> Self {
                 Self {
                     status: Some(aer::Status::WillCompleteAsync(WillCompleteAsync {})),
