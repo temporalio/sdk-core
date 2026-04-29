@@ -270,7 +270,10 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(source: E) -> Self {
-        Self::Application(ApplicationFailure::new(source).into())
+        match source.into().downcast::<ApplicationFailure>() {
+            Ok(application_failure) => Self::Application(Box::new(application_failure)),
+            Err(err) => Self::Application(ApplicationFailure::new(err).into()),
+        }
     }
 }
 
@@ -422,5 +425,54 @@ impl Debug for ActivityDefinitions {
         f.debug_struct("ActivityDefinitions")
             .field("activities", &self.activities.keys())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    fn activity_error_conversion_is_not_lossy(#[case] non_retryable: bool) {
+        use temporalio_common::protos::temporal::api::enums::v1::ApplicationErrorCategory;
+
+        let original = ApplicationFailure::builder(anyhow::anyhow!("big boom"))
+            .type_name("BigBoom".to_owned())
+            .non_retryable(non_retryable)
+            .next_retry_delay(StdDuration::from_secs(3))
+            .category(ApplicationErrorCategory::Benign)
+            .details("details")
+            .build();
+        let err = ActivityError::from(original);
+        let ActivityError::Application(actual) = err else {
+            panic!("application failure should become app failure")
+        };
+        assert_eq!(actual.type_name(), Some("BigBoom"));
+        assert_eq!(actual.is_non_retryable(), non_retryable);
+        assert_eq!(actual.next_retry_delay(), Some(StdDuration::from_secs(3)));
+        assert_eq!(actual.category(), ApplicationErrorCategory::Benign);
+        assert_eq!(actual.to_string(), "big boom");
+    }
+
+    #[test]
+    fn activity_error_from_special_err_becomes_application() {
+        #[derive(Debug, PartialEq)]
+        struct MyError;
+
+        impl std::error::Error for MyError {}
+        impl std::fmt::Display for MyError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("MyError")
+            }
+        }
+
+        let err = ActivityError::from(MyError);
+        let ActivityError::Application(actual) = err else {
+            panic!("expected application failure, got {err:?}")
+        };
+        assert_eq!(actual.to_string(), "MyError");
     }
 }
