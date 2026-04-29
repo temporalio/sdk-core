@@ -19,9 +19,7 @@ use temporalio_client::{
 
 use temporalio_common::{
     error::{ApplicationFailure, IncomingError},
-    prost_dur,
     protos::{
-        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
             ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
             IntoPayloadsExt,
@@ -43,16 +41,6 @@ use temporalio_common::{
             failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
             sdk::v1::UserMetadata,
         },
-        workflow_commands::{
-            ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
-        },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
-        enums::v1::{CommandType, EventType, RetryState},
-        failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
-        sdk::v1::UserMetadata,
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
