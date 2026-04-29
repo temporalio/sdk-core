@@ -37,6 +37,10 @@ message AccountAccess {
         ROLE_READ = 5; // Gives read only access to the account.
         ROLE_METRICS_READ = 6; // Gives read only access to the account metrics.
     }
+
+    // List of custom role IDs assigned to the user or service account.
+    // temporal:versioning:min_version=v0.13.0
+    repeated string custom_roles = 3;
 }
 
 message NamespaceAccess {
@@ -73,6 +77,10 @@ message Access {
     // The map of namespace accesses
     // The key is the namespace name and the value is the access to the namespace
     map<string, NamespaceAccess> namespace_accesses = 2;
+    // List of custom role IDs assigned to the user or service account.
+    // Deprecated: Not supported after v0.12.0 api version. Use account_access.custom_roles instead.
+    // temporal:versioning:max_version=v0.12.0
+    repeated string custom_roles_deprecated = 4 [deprecated = true];
 }
 
 message NamespaceScopedAccess {
@@ -293,4 +301,49 @@ message ApiKeySpec {
     google.protobuf.Timestamp expiry_time = 5;
     // True if the API key is disabled.
     bool disabled = 6;
+}
+
+message CustomRoleSpec {
+    // The name of the custom role.
+    string name = 1;
+    // The description of the custom role.
+    string description = 2;
+    // The permissions assigned to the custom role.
+    repeated Permission permissions = 3;
+
+    message Resources {
+        // The resource type the permission applies to.
+        string resource_type = 1;
+        // The resource IDs the permission applies to. Can be empty if allow_all is true.
+        repeated string resource_ids = 2;
+        // Whether the permission applies to all resources of the given type.
+        bool allow_all = 3;
+    }
+
+    message Permission {
+        // The resources the permission applies to.
+        Resources resources = 1;
+        // The actions allowed by the permission.
+        repeated string actions = 2;
+    }
+}
+
+message CustomRole {
+    // The id of the custom role.
+    string id = 1;
+    // The current version of the custom role specification.
+    // The next update operation will have to include this version.
+    string resource_version = 2;
+    // The custom role specification.
+    CustomRoleSpec spec = 3;
+    // The current state of the custom role.
+    // For any failed state, reach out to Temporal Cloud support for remediation.
+    temporal.api.cloud.resource.v1.ResourceState state = 4;
+    // The id of the async operation that is creating/updating/deleting the custom role, if any.
+    string async_operation_id = 5;
+    // The date and time when the custom role was created.
+    google.protobuf.Timestamp created_time = 6;
+    // The date and time when the custom role was last modified.
+    // Will not be set if the custom role has never been modified.
+    google.protobuf.Timestamp last_modified_time = 7;
 }
