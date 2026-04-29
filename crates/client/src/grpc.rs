@@ -521,6 +521,10 @@ macro_rules! proxier_impl {
         }
         dyn_clone::clone_trait_object!($trait_name);
 
+        // `allow(deprecated)`: upstream proto deprecations (e.g. cloud-api
+        // AddNamespaceRegion) generate calls to deprecated tonic client
+        // methods inside the impls; we still wire them for back-compat.
+        #[allow(deprecated)]
         impl<RC> $trait_name for RC
         where
             RC: RawGrpcCaller + RawClientProducer + Clone + Unpin,
@@ -533,6 +537,7 @@ macro_rules! proxier_impl {
 
         impl<T: Send + Sync + 'static> RawGrpcCaller for $client_type<T> {}
 
+        #[allow(deprecated)]
         impl<T> $trait_name for $client_type<T>
         where
             T: GrpcService<Body> + Clone + Send + Sync + 'static,
