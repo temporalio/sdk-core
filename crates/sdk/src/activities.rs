@@ -64,7 +64,6 @@ use temporalio_common::{
     data_converters::{
         DataConverter, GenericPayloadConverter, SerializationContext, SerializationContextData,
     },
-    error::{ApplicationFailure, FailurePayloads},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -385,6 +384,7 @@ impl Debug for ActivityDefinitions {
 mod test {
     use super::*;
     use rstest::rstest;
+    use temporalio_common::error::ApplicationFailure;
 
     #[rstest]
     #[case(true)]
