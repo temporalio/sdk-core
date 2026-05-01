@@ -62,6 +62,7 @@ use temporalio_common::{
             },
         },
     },
+    telemetry::{CoreTelemetry, Logger, TelemetryOptions, telemetry_init},
     worker::WorkerTaskTypes,
 };
 use tokio::sync::{Barrier, Notify, watch};
@@ -1334,6 +1335,16 @@ async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
 /// is able to trigger PollShutdown.
 #[tokio::test]
 async fn nexus_shutdown_does_not_hang_when_pending_completion_is_cancelled() {
+    let telemetry = telemetry_init(
+        TelemetryOptions::builder()
+            .logging(Logger::Forward {
+                filter: "OFF,temporalio_sdk_core::worker::nexus=ERROR".to_string(),
+            })
+            .build(),
+    )
+    .unwrap();
+    let _guard = tracing::subscriber::set_default(telemetry.trace_subscriber().unwrap().clone());
+
     let mut client = mock_manual_worker_client();
     let completion_rpc_started = Arc::new(Barrier::new(2));
     let completion_rpc_started_clone = completion_rpc_started.clone();
@@ -1397,6 +1408,18 @@ async fn nexus_shutdown_does_not_hang_when_pending_completion_is_cancelled() {
         }
     }
     drop(completion);
+
+    let logs = telemetry.fetch_buffered_logs();
+    assert!(
+        logs.iter().any(|log| {
+            log.level == tracing::Level::ERROR
+                && log.target == "temporalio_sdk_core::worker::nexus"
+                && log
+                    .message
+                    .starts_with("TaskCompletedGuard triggered notify on drop")
+        }),
+        "expected TaskCompletedGuard error log, got {logs:#?}"
+    );
 
     // Polling again should now return PollError::ShutDown because the outstanding task map is empty
     // and waiters should have been notified.
