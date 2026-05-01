@@ -72,8 +72,7 @@ impl OneActivityWorkflow {
                 input,
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow!("{e}"))?;
+            .await?;
         Ok(r)
     }
 }
@@ -92,8 +91,7 @@ impl MultiArgActivityWorkflow {
                 (input, " world".to_string()),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow!("{e}"))?;
+            .await?;
         Ok(r)
     }
 }
@@ -172,18 +170,19 @@ async fn activity_panics_are_retryable() {
     impl ActivityPanicRetryWorkflow {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<u32> {
-            ctx.start_activity(
-                PanicOnceActivities::panic_once,
-                (),
-                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 2,
-                        ..Default::default()
-                    })
-                    .build(),
-            )
-            .await
-            .map_err(|e| anyhow!("{e}").into())
+            let result = ctx
+                .start_activity(
+                    PanicOnceActivities::panic_once,
+                    (),
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .retry_policy(RetryPolicy {
+                            maximum_attempts: 2,
+                            ..Default::default()
+                        })
+                        .build(),
+                )
+                .await?;
+            Ok(result)
         }
     }
 

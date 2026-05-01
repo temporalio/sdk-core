@@ -194,8 +194,7 @@ impl DataConverterTestWorkflow {
                 input,
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
 
         Ok(output)
     }
@@ -218,8 +217,7 @@ impl DescribeDataConverterWorkflow {
                 input,
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
 
         Ok(output)
     }

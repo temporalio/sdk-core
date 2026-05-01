@@ -57,8 +57,7 @@ impl TimerWfNondeterministic {
                     (),
                     ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .await?;
             }
             _ => panic!("Ran too many times"),
         }
@@ -290,12 +289,10 @@ impl ActivityIdOrTypeChangeWf {
                         ..Default::default()
                     },
                 )
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .await?;
             } else {
                 ctx.start_local_activity(StdActivities::no_op, (), Default::default())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    .await?;
             }
         } else if id_change {
             ctx.start_activity(
@@ -305,16 +302,14 @@ impl ActivityIdOrTypeChangeWf {
                     .activity_id("I'm bad and wrong!".to_string())
                     .build(),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
         } else {
             ctx.start_activity(
                 StdActivities::no_op,
                 (),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
         }
         Ok(())
     }
