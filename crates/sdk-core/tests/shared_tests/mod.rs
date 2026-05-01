@@ -14,9 +14,15 @@ use temporalio_client::{
 use temporalio_common::{
     UntypedWorkflow,
     protos::temporal::api::{
-        enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
-        history::v1::history_event::Attributes::{
-            WorkflowExecutionTerminatedEventAttributes, WorkflowTaskFailedEventAttributes,
+        enums::v1::{
+            EventType,
+            WorkflowTaskFailedCause::{self, GrpcMessageTooLarge},
+        },
+        history::v1::history_event::{
+            self,
+            Attributes::{
+                WorkflowExecutionTerminatedEventAttributes, WorkflowTaskFailedEventAttributes,
+            },
         },
     },
     worker::WorkerTaskTypes,
@@ -197,9 +203,14 @@ pub(crate) async fn shutdown_during_active_timer_activity_workflows() {
         let bad_events: Vec<_> = history
             .events()
             .iter()
-            .filter(|e| {
-                e.event_type() == EventType::WorkflowTaskFailed
-                    || e.event_type() == EventType::WorkflowTaskTimedOut
+            .filter(|e| match &e.attributes {
+                Some(history_event::Attributes::WorkflowTaskFailedEventAttributes(f))
+                    if f.cause() != WorkflowTaskFailedCause::ForceCloseCommand =>
+                {
+                    true
+                }
+                Some(history_event::Attributes::WorkflowTaskTimedOutEventAttributes(_)) => true,
+                _ => false,
             })
             .collect();
         assert!(
