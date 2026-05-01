@@ -1281,6 +1281,15 @@ impl From<temporalio_common::data_converters::PayloadConversionError> for Workfl
     }
 }
 
+impl From<workflows::WorkflowError> for WorkflowTermination {
+    fn from(err: workflows::WorkflowError) -> Self {
+        match err {
+            workflows::WorkflowError::PayloadConversion(e) => Self::from(e),
+            workflows::WorkflowError::Execution(e) => Self::from(e),
+        }
+    }
+}
+
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
         Self::Failed(value.into())
