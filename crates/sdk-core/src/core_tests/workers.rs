@@ -1333,7 +1333,7 @@ async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
 
 /// Verifies that even if the a nexus task completion is dropped, the nexus worker
 /// is able to trigger PollShutdown.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn nexus_shutdown_does_not_hang_when_pending_completion_is_cancelled() {
     let telemetry = telemetry_init(
         TelemetryOptions::builder()
