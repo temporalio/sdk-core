@@ -54,10 +54,10 @@
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use std::time::Duration;
 /// use temporalio_sdk::workflows::select;
 /// use temporalio_sdk::WorkflowContext;
-/// use std::time::Duration;
 ///
 /// # async fn hidden(ctx: &mut WorkflowContext<()>) {
 /// select! {
@@ -77,7 +77,7 @@ pub use crate::__temporal_select as select;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use temporalio_sdk::workflows::join;
 ///
 /// # async fn hidden() {
@@ -695,10 +695,9 @@ pub fn serialize_result<T: TemporalSerializable + 'static>(
 ///
 /// # Example
 ///
-/// ```ignore
-/// use temporalio_sdk::workflows::join_all;
-/// use temporalio_sdk::WorkflowContext;
+/// ```no_run
 /// use std::time::Duration;
+/// use temporalio_sdk::{WorkflowContext, workflows::join_all};
 ///
 /// # async fn hidden(ctx: &mut WorkflowContext<()>) {
 /// let timers = vec![
