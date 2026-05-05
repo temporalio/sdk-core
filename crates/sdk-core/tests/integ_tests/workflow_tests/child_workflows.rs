@@ -93,7 +93,8 @@ impl HappyParent {
             )
             .await
             .expect("Child should start OK");
-        started.result().await.map_err(|e| anyhow!(e).into())
+        started.result().await?;
+        Ok(())
     }
 }
 
@@ -811,8 +812,7 @@ impl PassChildWorkflowSummaryToMetadata {
                 ..Default::default()
             },
         )
-        .await
-        .map_err(|e| anyhow!(e))?;
+        .await?;
         Ok(())
     }
 }
@@ -920,7 +920,7 @@ impl ParentWf {
                 _ => return Err(anyhow!("Expected start failure").into()),
             }
         }
-        let started = start_res.map_err(|e| anyhow!(e))?;
+        let started = start_res?;
         match (expectation, started.result().await) {
             (Expectation::Success, Ok(_)) => Ok(()),
             (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed(failure))) => {
@@ -1274,13 +1274,9 @@ impl UntypedHappyParent {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
-        started
-            .result()
-            .await
-            .map(|_| ())
-            .map_err(|e| anyhow!(e).into())
+            .await?;
+        started.result().await?;
+        Ok(())
     }
 }
 
@@ -1416,8 +1412,7 @@ impl ChildSignalSerializationFailParent {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
+            .await?;
 
         let signal_result = started
             .signal(UnserializableSignalChild::bad_signal, AlwaysFailsSerialize)
@@ -1484,8 +1479,7 @@ impl UnitChildParentWf {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
+            .await?;
         started.result().await?;
         Ok(())
     }

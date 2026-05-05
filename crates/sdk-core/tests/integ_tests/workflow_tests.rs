@@ -505,8 +505,7 @@ impl SlowCompletesWf {
                 "hi!".to_string(),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             ctx.timer(Duration::from_secs(1)).await;
         }
         Ok(())
@@ -881,8 +880,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
                 "hi".to_owned(),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             Ok(())
         }
     }
@@ -956,15 +954,13 @@ async fn history_out_of_order_on_restart() {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_string(),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             ctx.state(|wf| wf.hit_sleep.notify_one());
             ctx.timer(Duration::from_secs(5)).await;
             Ok(())
@@ -987,8 +983,7 @@ async fn history_out_of_order_on_restart() {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             // Timer is added after restarting workflow
             ctx.timer(Duration::from_secs(1)).await;
             ctx.start_activity(
@@ -996,8 +991,7 @@ async fn history_out_of_order_on_restart() {
                 "hi".to_string(),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
             ctx.timer(Duration::from_secs(2)).await;
             Ok(())
         }

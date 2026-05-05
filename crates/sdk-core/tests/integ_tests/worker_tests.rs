@@ -55,7 +55,6 @@ use temporalio_common::{
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, WorkerOptions, WorkflowContext, WorkflowResult,
-    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::WorkerInterceptor,
 };
@@ -419,15 +418,13 @@ async fn activity_tasks_from_completion_reserve_slots() {
                 (),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            .await?;
             ctx.start_activity(
                 FakeAct::act2,
                 (),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            .await?;
             ctx.state(|wf| wf.complete_token.cancel());
             Ok(())
         }
