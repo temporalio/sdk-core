@@ -1369,19 +1369,18 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
         let http_connect_proxy =
             unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
 
-        let dns_load_balancing = if http_connect_proxy.is_some()
-            || opts.grpc_override_callback.is_some()
-        {
-            None
-        } else {
-            unsafe { opts.dns_load_balancing_options.as_ref() }.map_or(
-                // Keep backwards compatibility.
-                // Before DnsLoadBalancingOptions was exposed through the C bridge,
-                // this was the default.
-                Some(temporalio_client::DnsLoadBalancingOptions::default()),
-                |c| c.into(),
-            )
-        };
+        let dns_load_balancing =
+            if http_connect_proxy.is_some() || opts.grpc_override_callback.is_some() {
+                None
+            } else {
+                unsafe { opts.dns_load_balancing_options.as_ref() }.map_or(
+                    // Keep backwards compatibility.
+                    // Before DnsLoadBalancingOptions was exposed through the C bridge,
+                    // this was the default.
+                    Some(temporalio_client::DnsLoadBalancingOptions::default()),
+                    |c| c.into(),
+                )
+            };
 
         Ok(
             temporalio_client::ConnectionOptions::new(Url::parse(opts.target_url.to_str())?)
