@@ -145,6 +145,11 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
 typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request,
                                                        void *user_data);
 
+typedef struct TemporalCoreClientDnsLoadBalancingOptions {
+  bool enabled;
+  uint64_t resolution_interval_millis;
+} TemporalCoreClientDnsLoadBalancingOptions;
+
 typedef struct TemporalCoreConnectionOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
@@ -172,6 +177,7 @@ typedef struct TemporalCoreConnectionOptions {
    * Optional user data passed to each callback call.
    */
   void *grpc_override_callback_user_data;
+  const struct TemporalCoreClientDnsLoadBalancingOptions *dns_load_balancing_options;
 } TemporalCoreConnectionOptions;
 
 typedef struct TemporalCoreByteArray {

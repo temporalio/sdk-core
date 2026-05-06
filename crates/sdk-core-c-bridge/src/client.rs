@@ -45,6 +45,7 @@ pub struct ConnectionOptions {
     pub grpc_override_callback: ClientGrpcOverrideCallback,
     /// Optional user data passed to each callback call.
     pub grpc_override_callback_user_data: *mut libc::c_void,
+    pub dns_load_balancing_options: *const ClientDnsLoadBalancingOptions,
 }
 
 #[repr(C)]
@@ -76,6 +77,12 @@ pub struct ClientHttpConnectProxyOptions {
     pub target_host: ByteArrayRef,
     pub username: ByteArrayRef,
     pub password: ByteArrayRef,
+}
+
+#[repr(C)]
+pub struct ClientDnsLoadBalancingOptions {
+    pub enabled: bool,
+    pub resolution_interval_millis: u64,
 }
 
 type CoreConnection = temporalio_client::Connection;
@@ -130,8 +137,8 @@ pub extern "C" fn temporal_core_client_connect(
             cb,
             options.grpc_override_callback_user_data,
         ));
-        connection_options.dns_load_balancing = None;
     }
+
     // Spawn async call
     let user_data = UserDataHandle(user_data);
     connection_options.metrics_meter = runtime.core.telemetry().get_temporal_metric_meter();
@@ -1362,6 +1369,20 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
         let http_connect_proxy =
             unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
 
+        let dns_load_balancing = if http_connect_proxy.is_some()
+            || opts.grpc_override_callback.is_some()
+        {
+            None
+        } else {
+            unsafe { opts.dns_load_balancing_options.as_ref() }.map_or(
+                // Keep backwards compatibility.
+                // Before DnsLoadBalancingOptions was exposed through the C bridge,
+                // this was the default.
+                Some(temporalio_client::DnsLoadBalancingOptions::default()),
+                |c| c.into(),
+            )
+        };
+
         Ok(
             temporalio_client::ConnectionOptions::new(Url::parse(opts.target_url.to_str())?)
                 .client_name(opts.client_name.to_string())
@@ -1375,12 +1396,8 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
                 .maybe_headers(headers)
                 .maybe_binary_headers(binary_headers)
                 .maybe_api_key(api_key)
-                .maybe_http_connect_proxy(http_connect_proxy.clone())
-                .dns_load_balancing(if http_connect_proxy.is_some() {
-                    None
-                } else {
-                    Some(temporalio_client::DnsLoadBalancingOptions::default())
-                })
+                .maybe_http_connect_proxy(http_connect_proxy)
+                .dns_load_balancing(dns_load_balancing)
                 .maybe_tls_options(tls_cfg)
                 .build(),
         )
@@ -1438,6 +1455,17 @@ impl From<&ClientKeepAliveOptions> for temporalio_client::ClientKeepAliveOptions
             interval: Duration::from_millis(opts.interval_millis),
             timeout: Duration::from_millis(opts.timeout_millis),
         }
+    }
+}
+
+impl From<&ClientDnsLoadBalancingOptions> for Option<temporalio_client::DnsLoadBalancingOptions> {
+    fn from(opts: &ClientDnsLoadBalancingOptions) -> Self {
+        if !opts.enabled {
+            return None;
+        }
+        let mut out = temporalio_client::DnsLoadBalancingOptions::default();
+        out.resolution_interval = Duration::from_millis(opts.resolution_interval_millis);
+        Some(out)
     }
 }
 
