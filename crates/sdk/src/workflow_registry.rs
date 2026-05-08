@@ -30,6 +30,8 @@ pub(crate) struct WorkflowExecutionInput {
     pub init_workflow_job: InitializeWorkflow,
     pub data_converter: DataConverter,
     pub host: Rc<dyn WorkflowHost>,
+    #[cfg(feature = "wasm-workflows")]
+    pub wasm_runtime: Option<Rc<crate::workflow_wasm::WasmRuntimeServices>>,
 }
 
 /// Creates workflow execution instances from activation input payloads and context.
@@ -153,6 +155,8 @@ fn workflow_input_parts(
         init_workflow_job,
         data_converter,
         host,
+        #[cfg(feature = "wasm-workflows")]
+            wasm_runtime: _,
     } = input;
     let payloads = init_workflow_job.arguments.clone();
     let payload_converter = data_converter.payload_converter().clone();

@@ -19,4 +19,8 @@ pub trait WorkflowInstance {
         routine_id: RoutineId,
         waker: &Waker,
     ) -> Result<RoutinePollResult, WorkflowFailure>;
+    /// Called after an activation has been fully driven and before the completion is reported.
+    fn checkpoint_activation(&mut self) -> Result<(), WorkflowFailure> {
+        Ok(())
+    }
 }

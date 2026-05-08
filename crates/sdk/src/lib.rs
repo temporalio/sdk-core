@@ -96,7 +96,7 @@ pub use temporalio_workflow::{
     WorkflowTermination,
 };
 #[cfg(feature = "wasm-workflows")]
-pub use workflow_wasm::WasmWorkflowComponent;
+pub use workflow_wasm::{WasmWorkflowComponent, WasmWorkflowSnapshotOptions};
 
 use crate::{
     activities::{
@@ -110,6 +110,8 @@ use crate::{
 };
 use anyhow::{Context, anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+#[cfg(feature = "wasm-workflows")]
+use std::rc::Rc;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -171,6 +173,10 @@ pub struct WorkerOptions {
     #[cfg(feature = "wasm-workflows")]
     #[builder(field)]
     wasm_workflow_components: Vec<WasmWorkflowComponent>,
+
+    #[cfg(feature = "wasm-workflows")]
+    #[builder(field)]
+    wasm_workflow_snapshots: workflow_wasm::WasmWorkflowSnapshotOptions,
 
     /// Set the deployment options for this worker. Defaults to a hash of the currently running
     /// executable.
@@ -321,6 +327,23 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         self.wasm_workflow_components.push(component);
         self
     }
+
+    /// Enable the experimental in-memory WASM workflow snapshot PoC.
+    #[cfg(feature = "wasm-workflows")]
+    pub fn enable_wasm_workflow_snapshots(mut self) -> Self {
+        self.wasm_workflow_snapshots = workflow_wasm::WasmWorkflowSnapshotOptions::enabled();
+        self
+    }
+
+    /// Enable the experimental in-memory WASM workflow snapshot PoC with explicit options.
+    #[cfg(feature = "wasm-workflows")]
+    pub fn enable_wasm_workflow_snapshots_with_options(
+        mut self,
+        options: WasmWorkflowSnapshotOptions,
+    ) -> Self {
+        self.wasm_workflow_snapshots = options;
+        self
+    }
 }
 
 // Needs to exist to avoid https://github.com/elastio/bon/issues/359
@@ -377,6 +400,23 @@ impl WorkerOptions {
     #[cfg(feature = "wasm-workflows")]
     pub fn register_wasm_workflow(&mut self, component: WasmWorkflowComponent) -> &mut Self {
         self.wasm_workflow_components.push(component);
+        self
+    }
+
+    /// Enable the experimental in-memory WASM workflow snapshot PoC.
+    #[cfg(feature = "wasm-workflows")]
+    pub fn enable_wasm_workflow_snapshots(&mut self) -> &mut Self {
+        self.wasm_workflow_snapshots = workflow_wasm::WasmWorkflowSnapshotOptions::enabled();
+        self
+    }
+
+    /// Enable the experimental in-memory WASM workflow snapshot PoC with explicit options.
+    #[cfg(feature = "wasm-workflows")]
+    pub fn enable_wasm_workflow_snapshots_with_options(
+        &mut self,
+        options: WasmWorkflowSnapshotOptions,
+    ) -> &mut Self {
+        self.wasm_workflow_snapshots = options;
         self
     }
 
@@ -446,6 +486,8 @@ struct WorkflowHalf {
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
     detect_nondeterministic_futures: bool,
+    #[cfg(feature = "wasm-workflows")]
+    wasm_runtime: Rc<workflow_wasm::WasmRuntimeServices>,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
@@ -503,6 +545,12 @@ impl Worker {
         let mut me = Self::new_from_core_definitions(worker, data_converter, acts, wfs);
         me.set_detect_nondeterministic_futures(options.detect_nondeterministic_futures);
         #[cfg(feature = "wasm-workflows")]
+        {
+            me.workflow_half.wasm_runtime = Rc::new(workflow_wasm::WasmRuntimeServices::new(
+                options.wasm_workflow_snapshots,
+            ));
+        }
+        #[cfg(feature = "wasm-workflows")]
         me.workflow_half
             .workflow_definitions
             .register_wasm_workflows(wasm_components)?;
@@ -527,6 +575,10 @@ impl Worker {
                 workflow_definitions: workflows,
                 workflow_removed_from_map: Default::default(),
                 detect_nondeterministic_futures: false,
+                #[cfg(feature = "wasm-workflows")]
+                wasm_runtime: Rc::new(workflow_wasm::WasmRuntimeServices::new(
+                    workflow_wasm::WasmWorkflowSnapshotOptions::disabled(),
+                )),
             },
             activity_half: ActivityHalf {
                 activities,
@@ -825,6 +877,8 @@ impl WorkflowHalf {
                         completions_tx.clone(),
                         common.data_converter.clone(),
                         self.detect_nondeterministic_futures,
+                        #[cfg(feature = "wasm-workflows")]
+                        Some(self.wasm_runtime.clone()),
                     ) {
                         Ok(result) => result,
                         Err(e) => {

@@ -42,6 +42,9 @@ unreachable_pub = "warn"
 [workspace.lints.clippy]
 dbg_macro = "warn"
 
+[patch.crates-io]
+wasmtime = { path = "../wasmtime/crates/wasmtime" }
+
 [profile.release-lto]
 inherits = "release"
 lto = true

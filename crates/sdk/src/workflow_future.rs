@@ -61,6 +61,9 @@ pub(crate) fn start_workflow(
     outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     data_converter: DataConverter,
     detect_nondeterministic: bool,
+    #[cfg(feature = "wasm-workflows")] wasm_runtime: Option<
+        Rc<crate::workflow_wasm::WasmRuntimeServices>,
+    >,
 ) -> Result<
     (
         impl Future<Output = WorkflowResult<Payload>> + use<>,
@@ -83,6 +86,8 @@ pub(crate) fn start_workflow(
         init_workflow_job,
         data_converter: data_converter.clone(),
         host: host.clone(),
+        #[cfg(feature = "wasm-workflows")]
+        wasm_runtime,
     })
     .context("Failed to create workflow execution")?;
 
@@ -632,6 +637,10 @@ impl Future for WorkflowFuture {
             }
 
             activation_cmds.extend(self.host.take_commands());
+            if let Err(e) = self.execution.checkpoint_activation() {
+                self.fail_wft(run_id.clone(), anyhow!(e.message), None);
+                continue 'activations;
+            }
             self.send_completion(run_id, activation_cmds);
         }
     }
