@@ -9,10 +9,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    WorkflowFetchHistoryOptions, WorkflowStartOptions, WorkflowTerminateOptions,
+    UntypedWorkflow, WorkflowFetchHistoryOptions, WorkflowStartOptions, WorkflowTerminateOptions,
 };
 use temporalio_common::{
-    UntypedWorkflow,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
         history::v1::history_event::Attributes::{
@@ -113,7 +112,10 @@ impl ShutdownTimerActivityLoopWf {
             ctx.start_activity(
                 StdActivities::no_op,
                 (),
-                ActivityOptions::start_to_close_timeout(Duration::from_secs(10)),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(10)),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;

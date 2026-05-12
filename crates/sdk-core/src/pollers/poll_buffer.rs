@@ -85,7 +85,6 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
-            capabilities.clone(),
         );
         if let Some(wftps) = options.wft_poller_shared.as_ref() {
             if is_sticky {
@@ -202,7 +201,6 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
-            capabilities.clone(),
         );
         Self::new(
             poll_fn,
@@ -261,7 +259,6 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                 num_pollers_handler,
                 shutdown,
                 last_successful_poll_time,
-                capabilities.clone(),
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
@@ -485,7 +482,6 @@ where
         num_pollers_handler: Option<F>,
         shutdown: CancellationToken,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
         let num_pollers_handler = num_pollers_handler.map(Arc::new);
@@ -502,7 +498,6 @@ where
             min,
             target: AtomicUsize::new(target),
             ever_saw_scaling_decision: AtomicBool::default(),
-            capabilities,
             behavior,
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
@@ -587,7 +582,6 @@ struct PollScalerReportHandle {
     min: usize,
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
-    capabilities: Arc<NamespaceCapabilities>,
     behavior: PollerBehavior,
 
     ingested_this_period: AtomicUsize,
@@ -693,14 +687,6 @@ impl PollScalerReportHandle {
                 Some(change(v, change_by).clamp(self.min, self.max))
             })
             .expect("Cannot fail because always returns Some");
-    }
-
-    /// We want to avoid scaling down on empty polls if the server has never made any scaling
-    /// decisions - otherwise we might never scale up again. If the server supports poller
-    /// autoscaling, it's safe to scale down without having seen a decision.
-    fn can_scale_down(&self) -> bool {
-        self.ever_saw_scaling_decision.load(Ordering::Relaxed)
-            || self.capabilities.poller_autoscaling()
     }
 }
 
@@ -868,7 +854,6 @@ mod tests {
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities {
                 graceful_poll_shutdown: AtomicBool::new(false),
-                poller_autoscaling: AtomicBool::new(false),
             }),
         );
 
@@ -928,7 +913,6 @@ mod tests {
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities {
                 graceful_poll_shutdown: AtomicBool::new(false),
-                poller_autoscaling: AtomicBool::new(false),
             }),
         );
 
@@ -1008,7 +992,6 @@ mod tests {
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities {
                 graceful_poll_shutdown: AtomicBool::new(false),
-                poller_autoscaling: AtomicBool::new(false),
             }),
         );
 
@@ -1117,7 +1100,6 @@ mod tests {
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities {
                 graceful_poll_shutdown: AtomicBool::new(false),
-                poller_autoscaling: AtomicBool::new(false),
             }),
         ));
 
@@ -1138,8 +1120,7 @@ mod tests {
         // With exponential backoff, I'm getting exactly 10 (initial poller count).
         assert!(
             hot_loop_calls == 10,
-            "Expected proper backoff with == 10 polls in 100ms, but got {} polls.",
-            hot_loop_calls
+            "Expected proper backoff with == 10 polls in 100ms, but got {hot_loop_calls} polls."
         );
 
         Arc::try_unwrap(pb)
@@ -1201,7 +1182,6 @@ mod tests {
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities {
                 graceful_poll_shutdown: AtomicBool::new(graceful),
-                poller_autoscaling: AtomicBool::new(false),
             }),
         );
 
@@ -1237,47 +1217,5 @@ mod tests {
         }
 
         pb.shutdown().await;
-    }
-
-    #[rstest]
-    #[case::with_capability(true, 1, 1)]
-    #[case::without_capability(false, 1, 10)]
-    #[case::clamps_to_nonone_min(true, 3, 3)]
-    #[test]
-    fn autoscale_down_on_timeout_respects_server_capability(
-        #[case] supports_autoscaling: bool,
-        #[case] minimum: usize,
-        #[case] expected_target: usize,
-    ) {
-        let handle = Arc::new(PollScalerReportHandle {
-            max: 10,
-            min: minimum,
-            target: AtomicUsize::new(10),
-            ever_saw_scaling_decision: AtomicBool::new(false),
-            capabilities: Arc::new(NamespaceCapabilities {
-                graceful_poll_shutdown: AtomicBool::new(false),
-                poller_autoscaling: AtomicBool::new(supports_autoscaling),
-            }),
-            behavior: PollerBehavior::Autoscaling {
-                minimum,
-                maximum: 10,
-                initial: 10,
-            },
-            ingested_this_period: Default::default(),
-            ingested_last_period: Default::default(),
-            scale_up_allowed: AtomicBool::new(true),
-            last_successful_poll_time: Arc::new(AtomicCell::new(None)),
-            exponential_backoff: parking_lot::Mutex::new(ExponentialBackoff::default()),
-            resource_exhausted_backoff: parking_lot::Mutex::new(ExponentialBackoff::default()),
-        });
-
-        for _ in 0..20 {
-            let empty_resp: Result<PollWorkflowTaskQueueResponse, tonic::Status> =
-                Ok(PollWorkflowTaskQueueResponse::default());
-            handle.poll_result(&empty_resp);
-        }
-
-        assert_eq!(handle.target.load(Ordering::Relaxed), expected_target);
-        assert!(!handle.ever_saw_scaling_decision.load(Ordering::Relaxed));
     }
 }

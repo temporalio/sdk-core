@@ -425,7 +425,6 @@ pub struct Worker {
 /// Namespace capabilities discovered via `describe_namespace` during worker validation.
 pub struct NamespaceCapabilities {
     pub(crate) graceful_poll_shutdown: AtomicBool,
-    pub(crate) poller_autoscaling: AtomicBool,
 }
 
 impl NamespaceCapabilities {
@@ -433,12 +432,6 @@ impl NamespaceCapabilities {
     /// can let in-flight polls complete rather than hard-killing them.
     pub fn graceful_poll_shutdown(&self) -> bool {
         self.graceful_poll_shutdown.load(Ordering::Relaxed)
-    }
-
-    /// Returns true if pollers may scale down on poll timeout even without an explicit scaling
-    /// decision from the server.
-    pub fn poller_autoscaling(&self) -> bool {
-        self.poller_autoscaling.load(Ordering::Relaxed)
     }
 }
 
@@ -512,17 +505,12 @@ impl Worker {
                         memo_size_limit_error: api_limits.memo_size_limit_error,
                     })
                 });
-                if let Some(caps) = ns_info.and_then(|ns| ns.capabilities) {
-                    if caps.worker_poll_complete_on_shutdown {
-                        self.capabilities
-                            .graceful_poll_shutdown
-                            .store(true, Ordering::Relaxed);
-                    }
-                    if caps.poller_autoscaling {
-                        self.capabilities
-                            .poller_autoscaling
-                            .store(true, Ordering::Relaxed);
-                    }
+                if let Some(caps) = ns_info.and_then(|ns| ns.capabilities)
+                    && caps.worker_poll_complete_on_shutdown
+                {
+                    self.capabilities
+                        .graceful_poll_shutdown
+                        .store(true, Ordering::Relaxed);
                 }
                 Ok(NamespaceInfo { limits })
             }
@@ -646,7 +634,6 @@ impl Worker {
         let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let capabilities = Arc::new(NamespaceCapabilities {
             graceful_poll_shutdown: AtomicBool::new(false),
-            poller_autoscaling: AtomicBool::new(false),
         });
 
         let nexus_slots = MeteredPermitDealer::new(
