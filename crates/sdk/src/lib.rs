@@ -72,6 +72,7 @@ extern crate tracing;
 extern crate self as temporalio_sdk;
 
 pub mod activities;
+pub mod error;
 pub mod interceptors;
 mod workflow_context;
 mod workflow_executor;
@@ -96,12 +97,16 @@ macro_rules! __temporal_join {
 
 use workflow_future::WorkflowFunction;
 
+pub use error::{
+    ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
+    ChildWorkflowSignalError, ChildWorkflowStartError, OutgoingActivityError, OutgoingError,
+    OutgoingWorkflowError,
+};
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, BaseWorkflowContext,
-    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions,
-    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
+    ActivityCloseTimeouts, ActivityOptions, BaseWorkflowContext, CancellableFuture,
+    ChildWorkflowOptions, ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions,
+    NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
     StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
     TimerOptions, WorkflowContext, WorkflowContextView,
 };
@@ -155,9 +160,7 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            common::v1::Payload,
-            enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{Failure, failure},
+            common::v1::Payload, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -615,13 +618,13 @@ impl Worker {
                      }| {
                         let wf_half = &*wf_half;
                         async move {
-                            let result = join_handle.await.map_err(|e| anyhow::anyhow!("{e}"))?;
+                            let result = join_handle.await.map_err(anyhow::Error::new)?;
                             // Eviction is normal workflow lifecycle - workflows loop waiting for
                             // eviction after completion to manage cache cleanup
                             if let Err(e) = result
                                 && !matches!(e, WorkflowTermination::Evicted)
                             {
-                                return Err(e.into());
+                                return Err(anyhow::Error::new(e));
                             }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
@@ -804,7 +807,6 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
-            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
@@ -813,7 +815,7 @@ impl WorkflowHalf {
                         run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
-                        payload_converter,
+                        common.data_converter.clone(),
                         self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
@@ -940,6 +942,7 @@ impl ActivityHalf {
 
                 let (ctx, args) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let activity_data_converter = data_converter.clone();
                 let codec_data_converter = data_converter.clone();
 
                 tokio::spawn(async move {
@@ -949,42 +952,42 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn)(args, data_converter, ctx).await
+                        (act_fn)(args, activity_data_converter, ctx).await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
+                    let activity_context = SerializationContextData::Activity;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
-                            format!("Activity function panicked: {}", panic_formatter(e)),
-                            true,
-                        )),
+                        Err(e) => ActivityExecutionResult::fail(
+                            data_converter.to_failure(
+                                &activity_context,
+                                OutgoingError::Activity(OutgoingActivityError::Application(
+                                    ApplicationFailure::new(anyhow!(
+                                        "Activity function panicked: {}",
+                                        panic_formatter(e)
+                                    ))
+                                    .into(),
+                                )),
+                            ),
+                        ),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
-                            ActivityError::Retryable {
-                                source,
-                                explicit_delay,
-                            } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(source),
-                                    false,
-                                );
-                                if let Some(d) = explicit_delay
-                                    && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
-                                        f.failure_info.as_mut()
-                                {
-                                    fi.next_retry_delay = d.try_into().ok();
-                                }
-                                f
-                            }),
-                            ActivityError::Cancelled { details } => {
-                                ActivityExecutionResult::cancel_from_details(details)
+                            ActivityError::Application(app) => {
+                                ActivityExecutionResult::fail(data_converter.to_failure(
+                                    &activity_context,
+                                    OutgoingError::Activity(OutgoingActivityError::Application(
+                                        app,
+                                    )),
+                                ))
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(nre),
-                                    true,
-                                ),
-                            ),
+                            ActivityError::Cancelled { details } => {
+                                ActivityExecutionResult::cancel(data_converter.to_failure(
+                                    &activity_context,
+                                    OutgoingError::Activity(OutgoingActivityError::Cancelled {
+                                        details,
+                                    }),
+                                ))
+                            }
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
@@ -1251,7 +1254,7 @@ pub enum WorkflowTermination {
 
     /// The workflow failed with an error.
     #[error("Workflow failed: {0}")]
-    Failed(#[source] anyhow::Error),
+    Failed(#[source] OutgoingWorkflowError),
 }
 
 impl WorkflowTermination {
@@ -1260,33 +1263,54 @@ impl WorkflowTermination {
         Self::ContinueAsNew(Box::new(can))
     }
 
-    /// Construct a [WorkflowTermination::Failed] variant from any error.
-    pub fn failed(err: impl Into<anyhow::Error>) -> Self {
+    /// Construct a [WorkflowTermination::Failed] variant from an application failure.
+    pub fn failed_application(err: ApplicationFailure) -> Self {
         Self::Failed(err.into())
     }
 }
 
 impl From<anyhow::Error> for WorkflowTermination {
     fn from(err: anyhow::Error) -> Self {
-        Self::Failed(err)
+        Self::Failed(err.into())
+    }
+}
+
+impl From<temporalio_common::data_converters::PayloadConversionError> for WorkflowTermination {
+    fn from(err: temporalio_common::data_converters::PayloadConversionError) -> Self {
+        Self::Failed(err.into())
+    }
+}
+
+impl From<workflows::WorkflowError> for WorkflowTermination {
+    fn from(err: workflows::WorkflowError) -> Self {
+        match err {
+            workflows::WorkflowError::PayloadConversion(e) => Self::from(e),
+            workflows::WorkflowError::Execution(e) => Self::from(e),
+        }
     }
 }
 
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowExecutionError> for WorkflowTermination {
     fn from(value: ChildWorkflowExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
+    }
+}
+
+impl From<ChildWorkflowStartError> for WorkflowTermination {
+    fn from(value: ChildWorkflowStartError) -> Self {
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowSignalError> for WorkflowTermination {
     fn from(value: ChildWorkflowSignalError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
@@ -1325,6 +1349,7 @@ fn _panic_formatter<T: 'static + PrintablePanicType>(panic: Box<dyn Any>) -> Box
 trait PrintablePanicType: Display {
     type NextType: PrintablePanicType;
 }
+
 impl PrintablePanicType for &str {
     type NextType = String;
 }

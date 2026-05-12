@@ -1,7 +1,14 @@
 //! Contains traits for and default implementations of data converters, codecs, and other
 //! serialization related functionality.
 
-use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
+mod failure_converter;
+
+pub use failure_converter::{
+    ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint, ChildWorkflowSignalDecodeHint,
+    ChildWorkflowStartDecodeHint, DefaultFailureConverter, FailureConverter, FailureDecodeHint,
+};
+
+use crate::protos::temporal::api::common::v1::Payload;
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
@@ -22,6 +29,7 @@ impl std::fmt::Debug for DataConverter {
             .finish_non_exhaustive()
     }
 }
+
 impl DataConverter {
     /// Create a new DataConverter with the given payload converter, failure converter, and codec.
     pub fn new(
@@ -103,6 +111,34 @@ impl DataConverter {
     /// Returns the payload converter component of this data converter.
     pub fn payload_converter(&self) -> &PayloadConverter {
         &self.payload_converter
+    }
+
+    /// Returns the failure converter component of this data converter.
+    pub fn failure_converter(&self) -> &(dyn FailureConverter + Send + Sync) {
+        self.failure_converter.as_ref()
+    }
+
+    /// Decode a Temporal failure into a caller-facing Rust error surface.
+    pub fn to_error<H: FailureDecodeHint>(
+        &self,
+        context: &SerializationContextData,
+        failure: crate::protos::temporal::api::failure::v1::Failure,
+        hint: H,
+    ) -> Result<H::Output, PayloadConversionError> {
+        let normalized =
+            self.failure_converter
+                .to_error(failure, &self.payload_converter, context)?;
+        Ok(hint.adapt(normalized))
+    }
+
+    /// Encode a typed Rust error surface into a Temporal failure.
+    pub fn to_failure(
+        &self,
+        context: &SerializationContextData,
+        error: crate::error::OutgoingError,
+    ) -> crate::protos::temporal::api::failure::v1::Failure {
+        self.failure_converter
+            .to_failure(error, &self.payload_converter, context)
     }
 
     /// Returns the codec component of this data converter.
@@ -196,26 +232,6 @@ impl std::error::Error for PayloadConversionError {
     }
 }
 
-/// Converts between Rust errors and Temporal [`Failure`] protobufs.
-pub trait FailureConverter {
-    /// Convert an error into a Temporal failure protobuf.
-    fn to_failure(
-        &self,
-        error: Box<dyn std::error::Error>,
-        payload_converter: &PayloadConverter,
-        context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError>;
-
-    /// Convert a Temporal failure protobuf back into a Rust error.
-    fn to_error(
-        &self,
-        failure: Failure,
-        payload_converter: &PayloadConverter,
-        context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
-}
-/// Default (currently unimplemented) failure converter.
-pub struct DefaultFailureConverter;
 /// Encodes and decodes payloads, enabling encryption or compression.
 pub trait PayloadCodec {
     /// Encode payloads before they are sent to the server.
@@ -304,6 +320,53 @@ pub trait TemporalDeserializable: Sized {
             return Err(PayloadConversionError::WrongEncoding);
         }
         Self::from_payload(ctx, payloads.into_iter().next().unwrap())
+    }
+}
+
+/// A codec-decoded set of payloads that can be deserialized later with to a user provided type.
+#[derive(Clone, Debug)]
+pub struct DecodablePayloads {
+    payloads: Vec<Payload>,
+    payload_converter: PayloadConverter,
+    context: SerializationContextData,
+}
+
+impl DecodablePayloads {
+    /// Create a new decodable payload set from raw payloads and the converter context needed to
+    /// deserialize them later.
+    pub fn new(
+        payloads: Vec<Payload>,
+        payload_converter: PayloadConverter,
+        context: SerializationContextData,
+    ) -> Self {
+        Self {
+            payloads,
+            payload_converter,
+            context,
+        }
+    }
+
+    /// Deserialize these payloads into a typed value using the stored payload converter.
+    pub fn deserialize<T: TemporalDeserializable + 'static>(
+        &self,
+    ) -> Result<T, PayloadConversionError> {
+        self.payload_converter.from_payloads(
+            &SerializationContext {
+                data: &self.context,
+                converter: &self.payload_converter,
+            },
+            self.payloads.clone(),
+        )
+    }
+
+    /// Returns the underlying payloads.
+    pub fn raw(&self) -> &[Payload] {
+        &self.payloads
+    }
+
+    /// Consume this value and return the underlying payloads as a [`RawValue`].
+    pub fn into_raw(self) -> RawValue {
+        RawValue::new(self.payloads)
     }
 }
 
@@ -672,24 +735,6 @@ impl Default for DataConverter {
         )
     }
 }
-impl FailureConverter for DefaultFailureConverter {
-    fn to_failure(
-        &self,
-        _: Box<dyn std::error::Error>,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
-        todo!()
-    }
-    fn to_error(
-        &self,
-        _: Failure,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        todo!()
-    }
-}
 impl PayloadCodec for DefaultPayloadCodec {
     fn encode(
         &self,
@@ -865,5 +910,54 @@ mod tests {
     fn multi_args_from_tuple() {
         let args: MultiArgs2<String, i32> = ("hello".to_string(), 42i32).into();
         assert_eq!(args, MultiArgs2("hello".to_string(), 42));
+    }
+
+    fn decodable_from_value<T: TemporalSerializable + 'static>(value: &T) -> DecodablePayloads {
+        let converter = PayloadConverter::default();
+        let payloads = converter
+            .to_payloads(
+                &SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                },
+                value,
+            )
+            .unwrap();
+        DecodablePayloads::new(payloads, converter, SerializationContextData::Workflow)
+    }
+    #[test]
+    fn decodable_payloads_roundtrip_string() {
+        let payloads = decodable_from_value(&"hello".to_string());
+
+        let result: String = payloads.deserialize().unwrap();
+
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_option_string() {
+        let payloads = decodable_from_value(&Some("hello".to_string()));
+
+        let result: Option<String> = payloads.deserialize().unwrap();
+
+        assert_eq!(result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_unit() {
+        let payloads = decodable_from_value(&());
+
+        let result: () = payloads.deserialize().unwrap();
+
+        assert_eq!(result, ());
+    }
+
+    #[test]
+    fn decodable_payloads_roundtrip_vec_string() {
+        let payloads = decodable_from_value(&vec!["hello".to_string(), "world".to_string()]);
+
+        let result: Vec<String> = payloads.deserialize().unwrap();
+
+        assert_eq!(result, vec!["hello".to_string(), "world".to_string()]);
     }
 }

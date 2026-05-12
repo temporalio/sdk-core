@@ -22,7 +22,6 @@ use temporalio_client::{Connection, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::{DataConverter, RawValue},
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
             ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
@@ -56,7 +55,6 @@ use temporalio_common::{
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, WorkerOptions, WorkflowContext, WorkflowResult,
-    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::WorkerInterceptor,
 };
@@ -65,6 +63,7 @@ use temporalio_sdk_core::{
     ResourceBasedTuner, ResourceSlotOptions, SlotInfo, SlotInfoTrait, SlotMarkUsedContext,
     SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit, TunerBuilder,
     WorkerConfig, WorkerValidationError, WorkerVersioningStrategy, WorkflowSlotKind, init_worker,
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
     test_help::{
         FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
         hist_to_poll_resp, mock_worker, mock_worker_client,
@@ -419,15 +418,13 @@ async fn activity_tasks_from_completion_reserve_slots() {
                 (),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            .await?;
             ctx.start_activity(
                 FakeAct::act2,
                 (),
                 ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
-            .await
-            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            .await?;
             ctx.state(|wf| wf.complete_token.cancel());
             Ok(())
         }

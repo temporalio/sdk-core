@@ -6,8 +6,8 @@ use temporalio_client::{WorkflowCancelOptions, WorkflowStartOptions};
 use temporalio_common::{
     UntypedWorkflow,
     data_converters::RawValue,
+    error::IncomingError,
     protos::{
-        TestHistoryBuilder, canned_histories,
         coresdk::{
             AsJsonPayloadExt,
             child_workflow::{
@@ -34,10 +34,11 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ChildWorkflowStartError, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    WorkflowTermination,
 };
 use temporalio_sdk_core::{
-    replay::DEFAULT_WORKFLOW_TYPE,
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
     test_help::{MockPollCfg, ResponseType, mock_worker, mock_worker_client, single_hist_mock_sg},
 };
 use tokio::{
@@ -92,7 +93,8 @@ impl HappyParent {
             )
             .await
             .expect("Child should start OK");
-        started.result().await.map_err(|e| anyhow!(e).into())
+        started.result().await?;
+        Ok(())
     }
 }
 
@@ -478,7 +480,13 @@ impl ParentCancelsChildWf {
             .result()
             .await
             .expect_err("child should be cancelled");
-        assert_matches!(err, ChildWorkflowExecutionError::Cancelled(_));
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(cancelled) = failure.as_cancelled() else {
+            panic!("child failure should retain cancelled reason");
+        };
+        assert!(cancelled.raw_details().is_none());
         Ok(())
     }
 }
@@ -489,6 +497,183 @@ async fn cancel_child_workflow() {
     let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
     worker.register_workflow::<ParentCancelsChildWf>();
     worker.run().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct RuntimeParentCancelsChildWf;
+
+#[workflow_methods]
+impl RuntimeParentCancelsChildWf {
+    #[run(name = "runtime_parent_cancels_child")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                GrandchildCancelled::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-runtime-cancelled-child", ctx.task_queue()),
+                    cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("child should start");
+        started.cancel("child cancel".to_string());
+        let err = started
+            .result()
+            .await
+            .expect_err("child should be cancelled");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(cancelled) = failure.as_cancelled() else {
+            panic!("child failure should retain cancelled reason");
+        };
+        assert!(cancelled.raw_details().is_none());
+        assert!(cancelled.cause().is_none());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_workflow_runtime_shape() {
+    let mut starter = CoreWfStarter::new("cancel-child-workflow-runtime-shape");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<RuntimeParentCancelsChildWf>();
+    worker.register_workflow::<GrandchildCancelled>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            RuntimeParentCancelsChildWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct GrandchildCancelled;
+
+#[workflow_methods]
+impl GrandchildCancelled {
+    #[run(name = "grandchild_wf")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.cancelled().await;
+        Err(WorkflowTermination::Cancelled)
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct PropagatesChildCancellationWf;
+
+#[workflow_methods]
+impl PropagatesChildCancellationWf {
+    #[run(name = "child_propagates_cancellation")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                GrandchildCancelled::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-grandchild", ctx.task_queue()),
+                    cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("grandchild should start");
+        started.cancel("grandchild cancel".to_string());
+        started.result().await?;
+        Ok(())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct GrandchildCancellationWf;
+
+#[workflow_methods]
+impl GrandchildCancellationWf {
+    #[run(name = "parent_observes_child_failure_from_grandchild_cancellation")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let child_workflow_id = format!("{}-child", ctx.task_queue());
+        let started = ctx
+            .child_workflow(
+                PropagatesChildCancellationWf::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: child_workflow_id.clone(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let err = started.result().await.expect_err("child should fail");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("child should fail with a child-workflow failure");
+        };
+        assert_eq!(
+            failure
+                .workflow_execution()
+                .map(|wf| wf.workflow_id.as_str()),
+            Some(child_workflow_id.as_str())
+        );
+        assert_eq!(
+            failure.workflow_type().map(|wf| wf.name.as_str()),
+            Some("child_propagates_cancellation")
+        );
+        let grandchild_workflow_id = format!("{}-grandchild", ctx.task_queue());
+        let Some(IncomingError::ChildWorkflowExecution(grandchild_failure)) = failure.cause()
+        else {
+            panic!("child failure should retain the grandchild failure wrapper");
+        };
+        assert_eq!(
+            grandchild_failure
+                .workflow_execution()
+                .map(|wf| wf.workflow_id.as_str()),
+            Some(grandchild_workflow_id.as_str())
+        );
+        assert_eq!(
+            grandchild_failure
+                .workflow_type()
+                .map(|wf| wf.name.as_str()),
+            Some("grandchild_wf")
+        );
+        let Some(cancelled) = grandchild_failure.as_cancelled() else {
+            panic!("grandchild failure should retain the cancelled reason");
+        };
+        assert!(cancelled.raw_details().is_none());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn child_workflow_cancellation_propigates() {
+    let mut starter = CoreWfStarter::new("child-workflow-cancellation-propigates");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<GrandchildCancellationWf>();
+    worker.register_workflow::<PropagatesChildCancellationWf>();
+    worker.register_workflow::<GrandchildCancelled>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            GrandchildCancellationWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }
 
 #[rstest::rstest]
@@ -627,8 +812,7 @@ impl PassChildWorkflowSummaryToMetadata {
                 ..Default::default()
             },
         )
-        .await
-        .map_err(|e| anyhow!(e))?;
+        .await?;
         Ok(())
     }
 }
@@ -732,14 +916,26 @@ impl ParentWf {
             .await;
         if let Expectation::StartFailure = expectation {
             match start_res {
-                Err(ChildWorkflowExecutionError::StartFailed { .. }) => return Ok(()),
+                Err(ChildWorkflowStartError::StartFailed { .. }) => return Ok(()),
                 _ => return Err(anyhow!("Expected start failure").into()),
             }
         }
-        let started = start_res.map_err(|e| anyhow!(e))?;
+        let started = start_res?;
         match (expectation, started.result().await) {
             (Expectation::Success, Ok(_)) => Ok(()),
-            (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed(_))) => Ok(()),
+            (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed(failure))) => {
+                assert_eq!(
+                    failure
+                        .workflow_execution()
+                        .map(|wf| wf.workflow_id.as_str()),
+                    Some("child-id-1")
+                );
+                assert_eq!(
+                    failure.workflow_type().map(|wf| wf.name.as_str()),
+                    Some("child")
+                );
+                Ok(())
+            }
             _ => Err(anyhow!("Unexpected child WF status").into()),
         }
     }
@@ -842,7 +1038,7 @@ impl CancelBeforeSendWf {
         );
         start.cancel();
         match start.await {
-            Err(ChildWorkflowExecutionError::Cancelled(_)) => Ok(()),
+            Err(ChildWorkflowStartError::Cancelled(_)) => Ok(()),
             _ => Err(anyhow!("Unexpected start status").into()),
         }
     }
@@ -921,6 +1117,52 @@ async fn cancel_child_before_started_event() {
     ))
     .await
     .unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancelChildBeforeStartedCannedWf;
+
+#[workflow_methods]
+impl CancelChildBeforeStartedCannedWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let start = ctx.child_workflow(
+            UntypedWorkflow::new("child"),
+            RawValue::new(vec![]),
+            ChildWorkflowOptions {
+                workflow_id: "child-id-1".to_string(),
+                cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                ..Default::default()
+            },
+        );
+        ctx.cancelled().await;
+        start.cancel();
+        let started = start
+            .await
+            .expect("child should still report a successful start");
+        let err = started
+            .result()
+            .await
+            .expect_err("child result should be cancelled");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(cancelled) = failure.as_cancelled() else {
+            panic!("child failure should retain cancelled reason");
+        };
+        assert!(cancelled.raw_details().is_none());
+        assert!(cancelled.cause().is_none());
+        Err(WorkflowTermination::Cancelled)
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_before_started_event_exposes_cancelled_error() {
+    let t = canned_histories::cancel_child_workflow_before_started_event("child-id-1");
+    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+    worker.register_workflow::<CancelChildBeforeStartedCannedWf>();
+    worker.run().await.unwrap();
 }
 
 #[workflow]
@@ -1032,13 +1274,9 @@ impl UntypedHappyParent {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
-        started
-            .result()
-            .await
-            .map(|_| ())
-            .map_err(|e| anyhow!(e).into())
+            .await?;
+        started.result().await?;
+        Ok(())
     }
 }
 
@@ -1131,7 +1369,7 @@ impl ChildStartSerializationFailParent {
                 },
             )
             .await;
-        assert_matches!(result, Err(ChildWorkflowExecutionError::Serialization(_)));
+        assert_matches!(result, Err(ChildWorkflowStartError::Serialization(_)));
         Ok(())
     }
 }
@@ -1174,8 +1412,7 @@ impl ChildSignalSerializationFailParent {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
+            .await?;
 
         let signal_result = started
             .signal(UnserializableSignalChild::bad_signal, AlwaysFailsSerialize)
@@ -1242,8 +1479,7 @@ impl UnitChildParentWf {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| anyhow!(e))?;
+            .await?;
         started.result().await?;
         Ok(())
     }

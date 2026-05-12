@@ -1250,6 +1250,17 @@ async fn call_cloud_service(
             rpc_call_on_trait!(client, call, CloudService, create_billing_report)
         }
         "GetBillingReport" => rpc_call_on_trait!(client, call, CloudService, get_billing_report),
+        "GetCustomRoles" => rpc_call_on_trait!(client, call, CloudService, get_custom_roles),
+        "GetCustomRole" => rpc_call_on_trait!(client, call, CloudService, get_custom_role),
+        "CreateCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, create_custom_role)
+        }
+        "UpdateCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, update_custom_role)
+        }
+        "DeleteCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_custom_role)
+        }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }

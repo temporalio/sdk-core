@@ -13,7 +13,7 @@ use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
+        VERSION_SEARCH_ATTR_KEY,
         constants::PATCH_MARKER_NAME,
         coresdk::{
             AsJsonPayloadExt, FromJsonPayloadExt,
@@ -42,7 +42,10 @@ use temporalio_sdk::{
     ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::{CoreInternalFlags, MockPollCfg, ResponseType},
+};
 use tokio::{join, sync::Notify};
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
@@ -343,10 +346,7 @@ fn patch_marker_single_activity(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     match marker_type {
         MarkerType::Deprecated => {
             t.add_has_change_marker(MY_PATCH_ID, true);
@@ -717,10 +717,7 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     if have_marker_in_hist {
         t.add_has_change_marker(MY_PATCH_ID, false);
         t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
@@ -827,10 +824,7 @@ async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     for i in 1..=num_patches {
         let id = format!("patch-{i}");
         t.add_has_change_marker(&id, false);

@@ -48,6 +48,7 @@ option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
         {name: "Connectivity Rules"; description: "Manage network connectivity rules"},
         {name: "Regions"; description: "Query available regions"},
         {name: "Account"; description: "Manage account settings and usage"},
+        {name: "Custom Roles"; description: "Manage custom roles and their permissions"},
         {name: "Operations"; description: "Query async operation status"}
     ];
 };
@@ -285,7 +286,9 @@ service CloudService {
     }
 
     // Add a new region to a namespace
+    // Deprecated: Use the UpdateNamespace() to add new replica in the namespace spec instead.
     rpc AddNamespaceRegion (AddNamespaceRegionRequest) returns (AddNamespaceRegionResponse) {
+        option deprecated = true;
         option (google.api.http) = {
             post: "/cloud/namespaces/{namespace}/add-region",
             body: "*"
@@ -302,7 +305,9 @@ service CloudService {
     }
 
     // Delete a region from a namespace
+    // Deprecated: Use the UpdateNamespace() to delete a replica in the namespace spec instead.
     rpc DeleteNamespaceRegion (DeleteNamespaceRegionRequest) returns (DeleteNamespaceRegionResponse) {
+        option deprecated = true;
         option (google.api.http) = {
             delete: "/cloud/namespaces/{namespace}/regions/{region}",
         };
@@ -1150,6 +1155,88 @@ service CloudService {
             external_docs: {
                 url: "https://docs.temporal.io/cloud/billing-reports";
                 description: "Billing report documentation";
+            };
+        };
+    }
+
+    // Get custom roles
+    rpc GetCustomRoles(GetCustomRolesRequest) returns (GetCustomRolesResponse) {
+        option (google.api.http) = {
+            get: "/cloud/custom-roles"
+        };
+        option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+            tags: ["Custom Roles"];
+            summary: "List custom roles";
+            description: "Returns a list of custom roles in the account";
+            external_docs: {
+                url: "https://docs.temporal.io/cloud/custom-roles";
+                description: "Custom roles documentation";
+            };
+        };
+    }
+
+    // Get a custom role
+    rpc GetCustomRole(GetCustomRoleRequest) returns (GetCustomRoleResponse) {
+        option (google.api.http) = {
+            get: "/cloud/custom-roles/{role_id}"
+        };
+        option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+            tags: ["Custom Roles"];
+            summary: "Get custom role by ID";
+            description: "Returns details for a specific custom role";
+            external_docs: {
+                url: "https://docs.temporal.io/cloud/custom-roles";
+                description: "Custom roles documentation";
+            };
+        };
+    }
+
+    // Create a custom role
+    rpc CreateCustomRole(CreateCustomRoleRequest) returns (CreateCustomRoleResponse) {
+        option (google.api.http) = {
+            post: "/cloud/custom-roles"
+            body: "*"
+        };
+        option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+            tags: ["Custom Roles"];
+            summary: "Create a custom role";
+            description: "Creates a new custom role in the account";
+            external_docs: {
+                url: "https://docs.temporal.io/cloud/custom-roles";
+                description: "Custom roles documentation";
+            };
+        };
+    }
+
+    // Update a custom role
+    rpc UpdateCustomRole(UpdateCustomRoleRequest) returns (UpdateCustomRoleResponse) {
+        option (google.api.http) = {
+            post: "/cloud/custom-roles/{role_id}"
+            body: "*"
+        };
+        option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+            tags: ["Custom Roles"];
+            summary: "Update a custom role";
+            description: "Updates an existing custom role";
+            external_docs: {
+                url: "https://docs.temporal.io/cloud/custom-roles";
+                description: "Custom roles documentation";
+            };
+        };
+    }
+
+    // Delete a custom role
+    rpc DeleteCustomRole(DeleteCustomRoleRequest) returns (DeleteCustomRoleResponse) {
+        option (google.api.http) = {
+            delete: "/cloud/custom-roles/{role_id}"
+        };
+        option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+            tags: ["Custom Roles"];
+            summary: "Delete a custom role";
+            description: "Deletes a custom role from the account";
+            external_docs: {
+                url: "https://docs.temporal.io/cloud/custom-roles";
+                description: "Custom roles documentation";
             };
         };
     }

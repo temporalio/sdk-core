@@ -1,6 +1,6 @@
 use crate::{
-    BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
-    WorkflowTermination, panic_formatter,
+    BaseWorkflowContext, CancellableID, OutgoingError, OutgoingWorkflowError, RustWfCmd,
+    TimerResult, UnblockEvent, WorkflowResult, WorkflowTermination, panic_formatter,
     workflow_executor::{SdkWakeGuard, WakeTracker},
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
@@ -17,7 +17,8 @@ use std::{
 };
 use temporalio_common::{
     data_converters::{
-        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
+        DataConverter, GenericPayloadConverter, PayloadConverter, SerializationContext,
+        SerializationContextData,
     },
     protos::{
         coresdk::{
@@ -69,7 +70,7 @@ impl WorkflowFunction {
         run_id: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         detect_nondeterministic: bool,
     ) -> Result<
         (
@@ -85,6 +86,7 @@ impl WorkflowFunction {
             "otel.kind" = "server"
         );
 
+        let payload_converter = data_converter.payload_converter().clone();
         let input = init_workflow_job.arguments.clone();
         let (base_ctx, cmd_receiver) = BaseWorkflowContext::new(
             namespace,
@@ -92,11 +94,11 @@ impl WorkflowFunction {
             run_id,
             init_workflow_job,
             cancel_rx,
-            payload_converter.clone(),
+            data_converter.clone(),
         );
 
         // Create the workflow execution using the factory
-        let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
+        let execution = (self.factory)(input, payload_converter, base_ctx.clone())
             .context("Failed to create workflow execution")?;
 
         let wake_tracking = if detect_nondeterministic {
@@ -116,7 +118,7 @@ impl WorkflowFunction {
                 incoming_activations,
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
-                payload_converter,
+                data_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
                 wake_tracking,
@@ -147,8 +149,8 @@ pub(crate) struct WorkflowFuture {
     cancel_sender: watch::Sender<Option<String>>,
     /// Base workflow context for sending commands
     base_ctx: BaseWorkflowContext,
-    /// Payload converter for serialization/deserialization
-    payload_converter: PayloadConverter,
+    /// Data converter for workflow failure conversion and payload serialization.
+    data_converter: DataConverter,
     /// Stores in-progress update futures
     update_futures: Vec<(
         String,
@@ -162,6 +164,23 @@ pub(crate) struct WorkflowFuture {
 }
 
 impl WorkflowFuture {
+    fn workflow_message_to_failure(&self, message: String) -> Failure {
+        self.workflow_error_to_failure(anyhow!(message).into())
+    }
+
+    fn workflow_error_to_failure(&self, error: crate::workflows::WorkflowError) -> Failure {
+        let outgoing = match error {
+            crate::workflows::WorkflowError::PayloadConversion(err) => {
+                OutgoingWorkflowError::from(err)
+            }
+            crate::workflows::WorkflowError::Execution(err) => err.into(),
+        };
+        self.data_converter.to_failure(
+            &SerializationContextData::Workflow,
+            OutgoingError::Workflow(outgoing),
+        )
+    }
+
     fn unblock(&mut self, event: UnblockEvent) -> Result<(), Error> {
         let cmd_id = match event {
             UnblockEvent::Timer(seq, _) => CommandID::Timer(seq),
@@ -262,7 +281,7 @@ impl WorkflowFuture {
                             payloads: q.arguments,
                         },
                         headers: q.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
@@ -306,14 +325,12 @@ impl WorkflowFuture {
                             response: Some(payload),
                         }),
                         // TODO [rust-sdk-branch]: Return list of known queries in error
-                        None => query_result::Variant::Failed(Failure {
-                            message: format!("No query handler for '{}'", query_type),
-                            ..Default::default()
-                        }),
-                        Some(Err(e)) => query_result::Variant::Failed(Failure {
-                            message: e.to_string(),
-                            ..Default::default()
-                        }),
+                        None => query_result::Variant::Failed(self.workflow_message_to_failure(
+                            format!("No query handler for '{}'", query_type),
+                        )),
+                        Some(Err(e)) => {
+                            query_result::Variant::Failed(self.workflow_error_to_failure(e))
+                        }
                     };
 
                     outgoing_cmds.push(
@@ -339,7 +356,7 @@ impl WorkflowFuture {
                             payloads: sig.input,
                         },
                         headers: sig.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
@@ -371,7 +388,7 @@ impl WorkflowFuture {
                     let data = DispatchData {
                         payloads: Payloads { payloads: u.input },
                         headers: u.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let trait_val_result = if u.run_validator {
@@ -408,7 +425,9 @@ impl WorkflowFuture {
                             outgoing_cmds.push(
                                 update_response(
                                     protocol_instance_id.clone(),
-                                    update_response::Response::Rejected(anyhow!(e).into()),
+                                    update_response::Response::Rejected(
+                                        self.workflow_error_to_failure(e),
+                                    ),
                                 )
                                 .into(),
                             );
@@ -473,9 +492,10 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
-                        return Poll::Ready(Err(WorkflowTermination::failed(anyhow!(
+                        return Poll::Ready(Err(anyhow!(
                             "Workflow future's activation channel was lost!"
-                        ))));
+                        )
+                        .into()));
                     }
                 },
                 Poll::Pending => return Poll::Pending,
@@ -608,7 +628,9 @@ impl WorkflowFuture {
                                     instance_id,
                                     match v {
                                         Ok(v) => update_response::Response::Completed(v),
-                                        Err(e) => update_response::Response::Rejected(e.into()),
+                                        Err(e) => update_response::Response::Rejected(
+                                            self.workflow_error_to_failure(e),
+                                        ),
                                     },
                                 )
                                 .into(),
@@ -652,10 +674,14 @@ impl WorkflowFuture {
                     self.outgoing_completions
                         .send(WorkflowActivationCompletion::fail(
                             run_id,
-                            Failure {
-                                message: errmsg,
-                                ..Default::default()
-                            },
+                            self.data_converter.to_failure(
+                                &SerializationContextData::Workflow,
+                                OutgoingError::Workflow(OutgoingWorkflowError::Application(
+                                    Box::new(crate::ApplicationFailure::non_retryable(anyhow!(
+                                        "{errmsg}"
+                                    ))),
+                                )),
+                            ),
                             None,
                         ))
                         .expect("Completion channel intact");
@@ -790,10 +816,10 @@ impl WorkflowFuture {
                     }
                     WorkflowTermination::Failed(e) => {
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                            failure: Some(Failure {
-                                message: format!("Workflow execution error: {e}"),
-                                ..Default::default()
-                            }),
+                            failure: Some(self.data_converter.to_failure(
+                                &SerializationContextData::Workflow,
+                                OutgoingError::Workflow(e),
+                            )),
                         })
                     }
                 },

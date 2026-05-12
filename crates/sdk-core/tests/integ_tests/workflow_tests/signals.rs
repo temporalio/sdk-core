@@ -2,7 +2,6 @@ use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_s
 use std::collections::HashMap;
 use temporalio_client::{WorkflowStartOptions, WorkflowStartSignal};
 use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
         AsJsonPayloadExt, IntoPayloadsExt,
         workflow_activation::{
@@ -15,6 +14,7 @@ use temporalio_common::protos::{
         enums::v1::{CommandType, EventType},
     },
 };
+use temporalio_sdk_core::replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder};
 
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
