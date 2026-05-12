@@ -113,7 +113,10 @@ impl ShutdownTimerActivityLoopWf {
             ctx.start_activity(
                 StdActivities::no_op,
                 (),
-                ActivityOptions::start_to_close_timeout(Duration::from_secs(10)),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(10)),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
