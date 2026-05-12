@@ -505,12 +505,12 @@ impl Worker {
                         memo_size_limit_error: api_limits.memo_size_limit_error,
                     })
                 });
-                if let Some(caps) = ns_info.and_then(|ns| ns.capabilities) {
-                    if caps.worker_poll_complete_on_shutdown {
-                        self.capabilities
-                            .graceful_poll_shutdown
-                            .store(true, Ordering::Relaxed);
-                    }
+                if let Some(caps) = ns_info.and_then(|ns| ns.capabilities)
+                    && caps.worker_poll_complete_on_shutdown
+                {
+                    self.capabilities
+                        .graceful_poll_shutdown
+                        .store(true, Ordering::Relaxed);
                 }
                 Ok(NamespaceInfo { limits })
             }
