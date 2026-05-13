@@ -43,7 +43,8 @@ unreachable_pub = "warn"
 dbg_macro = "warn"
 
 [patch.crates-io]
-wasmtime = { path = "../wasmtime/crates/wasmtime" }
+# Fork branch: temporal-snapshotting
+wasmtime = { git = "https://github.com/temporalio/wasmtime", rev = "2d47ad7a295d8a6d7be24aaff6e56b0bb742a922" }
 
 [profile.release-lto]
 inherits = "release"

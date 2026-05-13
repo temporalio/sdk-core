@@ -168,6 +168,7 @@ tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
 tonic = { workspace = true, default-features = false, features = ["router"] }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", features = ["diff"] }
+wasmparser = "=0.246.2"
 
 [[bin]]
 name = "histfetch"

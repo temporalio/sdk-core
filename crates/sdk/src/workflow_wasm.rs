@@ -17,7 +17,7 @@ use temporalio_workflow::runtime::{
     },
 };
 use wasmtime::{
-    Config, Engine, Store, TemporalStoreSnapshot,
+    Config, Engine, Store, StoreSnapshot,
     component::{Component, HasSelf, Linker, ResourceAny},
 };
 
@@ -40,6 +40,9 @@ const SYNC_WIT_ABI_VERSION: &str = "temporal:workflow-runtime@0.1.0/sync-poll";
 const WASMTIME_COMPATIBILITY_KEY: &str =
     "wasmtime-44.0.1+temporal-snapshot-poc/component-model/default-config";
 const DEFAULT_SNAPSHOT_CONTEXT_POOL_SIZE: usize = 2;
+const WORKFLOW_INSTANCE_RESOURCE_ID: u64 = 0;
+const WORKFLOW_INSTANCE_RESOURCE_TYPE: &str =
+    "temporal:workflow-runtime/workflow-guest.workflow-instance";
 #[allow(dead_code)]
 const WASM_PAGE_SIZE: usize = 64 * 1024;
 
@@ -184,7 +187,7 @@ struct WasmSnapshotMetadata {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WasmWorkflowSnapshot {
     metadata: WasmSnapshotMetadata,
-    store: TemporalStoreSnapshot,
+    store: StoreSnapshot,
     resources: Vec<WasmResourceSnapshot>,
 }
 
@@ -238,6 +241,7 @@ struct SparseMemoryPage {
 struct WasmResourceSnapshot {
     resource_id: u64,
     type_name: String,
+    resource_rep: u32,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -687,13 +691,23 @@ impl WasmWorkflowInstance {
             .live
             .as_mut()
             .context("WASM workflow has no live execution context to snapshot")?;
-        let store = live.store.temporal_snapshot().map_err(|err| {
+        let store = live.store.snapshot().map_err(|err| {
             anyhow::Error::msg(format!("failed to snapshot WASM workflow store: {err}"))
         })?;
+        let workflow_instance_rep = live
+            .workflow_instance
+            .resource_rep(&mut live.store)
+            .map_err(|err| {
+                anyhow::Error::msg(format!("failed to snapshot WASM workflow resource: {err}"))
+            })?;
         Ok(WasmWorkflowSnapshot {
             metadata: self.snapshot_metadata.clone(),
             store,
-            resources: Vec::new(),
+            resources: vec![WasmResourceSnapshot {
+                resource_id: WORKFLOW_INSTANCE_RESOURCE_ID,
+                type_name: WORKFLOW_INSTANCE_RESOURCE_TYPE.to_string(),
+                resource_rep: workflow_instance_rep,
+            }],
         })
     }
 
@@ -720,10 +734,18 @@ impl WasmWorkflowInstance {
             context_lease,
         )?;
         live.store
-            .temporal_restore_snapshot(&snapshot.store)
+            .restore_snapshot(&snapshot.store)
             .map_err(|err| {
                 anyhow::Error::msg(format!(
                     "failed to restore WASM workflow store snapshot: {err}"
+                ))
+            })?;
+        let workflow_instance_resource = self.workflow_instance_resource(snapshot)?;
+        live.workflow_instance
+            .set_resource_rep(&mut live.store, workflow_instance_resource.resource_rep)
+            .map_err(|err| {
+                anyhow::Error::msg(format!(
+                    "failed to restore WASM workflow resource snapshot: {err}"
                 ))
             })?;
         live.store.data_mut().host = self.rehydrate_input.host.clone();
@@ -755,10 +777,27 @@ impl WasmWorkflowInstance {
                 "WASM workflow snapshot metadata does not match the currently registered component"
             );
         }
-        if !snapshot.resources.is_empty() {
-            bail!("WASM workflow snapshot contains host resources that this PoC cannot restore");
-        }
+        self.workflow_instance_resource(snapshot)?;
         Ok(())
+    }
+
+    fn workflow_instance_resource<'a>(
+        &self,
+        snapshot: &'a WasmWorkflowSnapshot,
+    ) -> Result<&'a WasmResourceSnapshot, anyhow::Error> {
+        if snapshot.resources.len() != 1 {
+            bail!(
+                "WASM workflow snapshot must contain exactly one workflow-instance resource, found {}",
+                snapshot.resources.len()
+            );
+        }
+        let resource = &snapshot.resources[0];
+        if resource.resource_id != WORKFLOW_INSTANCE_RESOURCE_ID
+            || resource.type_name != WORKFLOW_INSTANCE_RESOURCE_TYPE
+        {
+            bail!("WASM workflow snapshot contains an unsupported resource");
+        }
+        Ok(resource)
     }
 }
 
@@ -885,12 +924,12 @@ mod tests {
             .set(&mut source_store, Val::I32(42))
             .unwrap();
 
-        let snapshot = source_store.temporal_snapshot().unwrap();
+        let snapshot = source_store.snapshot().unwrap();
         assert_eq!(snapshot.memories[0].nonzero_pages.len(), 1);
 
         let mut target_store = Store::new(&engine, ());
         let target_instance = Instance::new(&mut target_store, &module, &[]).unwrap();
-        target_store.temporal_restore_snapshot(&snapshot).unwrap();
+        target_store.restore_snapshot(&snapshot).unwrap();
 
         let target_memory = target_instance
             .get_memory(&mut target_store, "memory")
