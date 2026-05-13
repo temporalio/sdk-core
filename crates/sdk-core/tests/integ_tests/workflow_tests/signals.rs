@@ -185,7 +185,7 @@ impl SignalsChild {
     #[run(name = "child_signaler")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started_child = ctx
-            .child_workflow(
+            .start_child_workflow(
                 ChildSignalReceiver::run,
                 (),
                 ChildWorkflowOptions {

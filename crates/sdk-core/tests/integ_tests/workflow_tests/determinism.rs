@@ -379,7 +379,7 @@ impl ChildWfIdOrTypeChangeWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>, id_change: bool) -> WorkflowResult<()> {
         if id_change {
-            ctx.child_workflow(
+            ctx.start_child_workflow(
                 UntypedWorkflow::new("child"),
                 RawValue::new(vec![]),
                 ChildWorkflowOptions {
@@ -389,7 +389,7 @@ impl ChildWfIdOrTypeChangeWf {
             )
             .await?;
         } else {
-            ctx.child_workflow(
+            ctx.start_child_workflow(
                 UntypedWorkflow::new("not the child wf type"),
                 RawValue::new(vec![]),
                 ChildWorkflowOptions {

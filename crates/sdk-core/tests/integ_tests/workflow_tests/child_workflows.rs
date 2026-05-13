@@ -83,7 +83,7 @@ impl HappyParent {
     #[run(name = "parent_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 ChildWf::run,
                 (),
                 ChildWorkflowOptions {
@@ -129,7 +129,7 @@ impl AbandonedChildBugReproParent {
     #[run(name = "parent_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 AbandonedChildBugReproChild::run,
                 (),
                 ChildWorkflowOptions {
@@ -216,7 +216,7 @@ impl AbandonedChildResolvesPostCancelParent {
     #[run(name = "parent_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 AbandonedChildResolvesPostCancelChild::run,
                 (),
                 ChildWorkflowOptions {
@@ -318,7 +318,7 @@ impl CancelledChildGetsReasonParent {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 CancelledChildGetsReasonChild::run,
                 (),
                 ChildWorkflowOptions {
@@ -381,7 +381,7 @@ impl SignalChildWorkflowWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let start_res = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UnusedChildWf::run,
                 (),
                 ChildWorkflowOptions {
@@ -464,7 +464,7 @@ impl ParentCancelsChildWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let start_res = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UntypedWorkflow::new("child"),
                 RawValue::new(vec![]),
                 ChildWorkflowOptions {
@@ -508,7 +508,7 @@ impl RuntimeParentCancelsChildWf {
     #[run(name = "runtime_parent_cancels_child")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 GrandchildCancelled::run,
                 (),
                 ChildWorkflowOptions {
@@ -579,7 +579,7 @@ impl PropagatesChildCancellationWf {
     #[run(name = "child_propagates_cancellation")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 GrandchildCancelled::run,
                 (),
                 ChildWorkflowOptions {
@@ -606,7 +606,7 @@ impl GrandchildCancellationWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let child_workflow_id = format!("{}-child", ctx.task_queue());
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 PropagatesChildCancellationWf::run,
                 (),
                 ChildWorkflowOptions {
@@ -802,7 +802,7 @@ impl PassChildWorkflowSummaryToMetadata {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let child_wf_id = ctx.state(|wf| wf.child_wf_id.clone());
-        ctx.child_workflow(
+        ctx.start_child_workflow(
             UntypedWorkflow::new("child"),
             RawValue::new(vec![]),
             ChildWorkflowOptions {
@@ -905,7 +905,7 @@ impl ParentWf {
     async fn run(ctx: &mut WorkflowContext<Self>, expectation_u8: u8) -> WorkflowResult<()> {
         let expectation = Expectation::try_from_u8(expectation_u8).unwrap();
         let start_res = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UntypedWorkflow::new("child"),
                 RawValue::new(vec![]),
                 ChildWorkflowOptions {
@@ -1028,7 +1028,7 @@ impl CancelBeforeSendWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let workflow_id = "child-id-1";
-        let start = ctx.child_workflow(
+        let start = ctx.start_child_workflow(
             UntypedWorkflow::new("child"),
             RawValue::new(vec![]),
             ChildWorkflowOptions {
@@ -1127,7 +1127,7 @@ struct CancelChildBeforeStartedCannedWf;
 impl CancelChildBeforeStartedCannedWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let start = ctx.child_workflow(
+        let start = ctx.start_child_workflow(
             UntypedWorkflow::new("child"),
             RawValue::new(vec![]),
             ChildWorkflowOptions {
@@ -1174,7 +1174,7 @@ struct CancelChildBeforeStartedParent {
 impl CancelChildBeforeStartedParent {
     #[run(name = "parent_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let started = ctx.child_workflow(
+        let started = ctx.start_child_workflow(
             AbandonedChildBugReproChild::run,
             (),
             ChildWorkflowOptions {
@@ -1266,7 +1266,7 @@ impl UntypedHappyParent {
     #[run(name = "parent_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UntypedWorkflow::new(CHILD_WF_TYPE),
                 RawValue::new(vec![]),
                 ChildWorkflowOptions {
@@ -1360,7 +1360,7 @@ impl ChildStartSerializationFailParent {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let result = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UnserializableStartInputChild::run,
                 AlwaysFailsSerialize,
                 ChildWorkflowOptions {
@@ -1404,7 +1404,7 @@ impl ChildSignalSerializationFailParent {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UnserializableSignalChild::run,
                 (),
                 ChildWorkflowOptions {
@@ -1471,7 +1471,7 @@ impl UnitChildParentWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 UnitChildWf::run,
                 (),
                 ChildWorkflowOptions {
@@ -1507,7 +1507,7 @@ impl CancelResultFutureParent {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 CancelledChildGetsReasonChild::run,
                 (),
                 ChildWorkflowOptions {
@@ -1586,7 +1586,7 @@ impl CancelExternalThenChildParent {
 
         // Now start a child — child_seq=1, but cancel_external_wf_seq=3.
         let started = ctx
-            .child_workflow(
+            .start_child_workflow(
                 CancelledChildGetsReasonChild::run,
                 (),
                 ChildWorkflowOptions {
