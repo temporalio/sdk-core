@@ -757,6 +757,20 @@ impl<W> SyncWorkflowContext<W> {
         self.base.start_child_workflow(workflow, input, opts)
     }
 
+    /// Deprecated alias for [`SyncWorkflowContext::start_child_workflow`].
+    #[deprecated(note = "use `start_child_workflow` instead")]
+    pub fn child_workflow<WD: WorkflowDefinition>(
+        &self,
+        workflow: WD,
+        input: impl Into<WD::Input>,
+        opts: ChildWorkflowOptions,
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
+    where
+        WD::Output: TemporalDeserializable,
+    {
+        self.start_child_workflow(workflow, input, opts)
+    }
+
     /// Check (or record) that this workflow history was created with the provided patch
     pub fn patched(&self, patch_id: &str) -> bool {
         self.patch_impl(patch_id, false)
@@ -1022,7 +1036,7 @@ impl<W> WorkflowContext<W> {
         self.sync.start_local_activity(activity, input, opts)
     }
 
-    /// Start a child workflow. See [SyncWorkflowContext::child_workflow] for details.
+    /// Start a child workflow. See [SyncWorkflowContext::start_child_workflow] for details.
     pub fn start_child_workflow<WD: WorkflowDefinition>(
         &self,
         workflow: WD,
@@ -1033,6 +1047,20 @@ impl<W> WorkflowContext<W> {
         WD::Output: TemporalDeserializable,
     {
         self.sync.start_child_workflow(workflow, input, opts)
+    }
+
+    /// Deprecated alias for [`WorkflowContext::start_child_workflow`].
+    #[deprecated(note = "use `start_child_workflow` instead")]
+    pub fn child_workflow<WD: WorkflowDefinition>(
+        &self,
+        workflow: WD,
+        input: impl Into<WD::Input>,
+        opts: ChildWorkflowOptions,
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
+    where
+        WD::Output: TemporalDeserializable,
+    {
+        self.start_child_workflow(workflow, input, opts)
     }
 
     /// Check (or record) that this workflow history was created with the provided patch
