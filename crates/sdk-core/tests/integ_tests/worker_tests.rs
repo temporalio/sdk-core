@@ -983,3 +983,8 @@ fn test_default_build_id() {
     assert!(!o.deployment_options.version.build_id.is_empty());
     assert_ne!(o.deployment_options.version.build_id, "undetermined");
 }
+
+#[tokio::test]
+async fn shutdown_during_active_timer_activity_workflows() {
+    shared_tests::shutdown_during_active_timer_activity_workflows().await
+}
