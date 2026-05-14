@@ -32,3 +32,8 @@ async fn grpc_message_too_large_test() {
 async fn priority_values_sent_to_server() {
     shared_tests::priority::priority_values_sent_to_server().await
 }
+
+#[tokio::test]
+async fn shutdown_during_active_timer_activity_workflows() {
+    shared_tests::shutdown_during_active_timer_activity_workflows().await
+}
