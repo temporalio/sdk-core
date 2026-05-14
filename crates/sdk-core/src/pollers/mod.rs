@@ -157,6 +157,11 @@ where
                         return match state.poller.poll().await {
                             Some(Ok((task, permit))) => {
                                 if task == Default::default() {
+                                    if state.poller_was_shutdown {
+                                        // Server sent an empty response after we initiated
+                                        // shutdown — this is the graceful shutdown signal.
+                                        return None;
+                                    }
                                     // We get the default proto in the event that the long poll
                                     // times out.
                                     debug!("Poll {} task timeout", T::task_name());
@@ -275,4 +280,94 @@ pub(crate) fn new_nexus_task_poller(
         shutdown_token,
     )
     .into_stream()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        abstractions::tests::fixed_size_permit_dealer, pollers::MockPermittedPollBuffer,
+        test_help::mock_poller, worker::ActivitySlotKind,
+    };
+    use futures_util::{StreamExt, pin_mut};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    /// Verify that empty responses after shutdown are not treated as poll timeout and retried
+    /// indefinitely
+    #[tokio::test]
+    async fn empty_response_after_shutdown_terminates_stream() {
+        let poll_count = Arc::new(AtomicUsize::new(0));
+        let poll_count_clone = poll_count.clone();
+
+        let mut mock_poller = mock_poller();
+        mock_poller.expect_poll().returning(move || {
+            poll_count_clone.fetch_add(1, Ordering::SeqCst);
+            Some(Ok(PollActivityTaskQueueResponse::default()))
+        });
+
+        let sem = Arc::new(fixed_size_permit_dealer::<ActivitySlotKind>(10));
+        let shutdown_token = CancellationToken::new();
+
+        let stream = new_activity_task_poller(
+            Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
+            MetricsContext::no_op(),
+            shutdown_token.clone(),
+        );
+        pin_mut!(stream);
+
+        shutdown_token.cancel();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next()).await;
+        assert!(
+            result.is_ok(),
+            "Stream should terminate promptly after shutdown, not hang"
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "Stream should return None (terminated) on empty response after shutdown"
+        );
+
+        let total = poll_count.load(Ordering::SeqCst);
+        assert!(
+            total < 5,
+            "Expected stream to terminate quickly, but poller was called {total} times"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_response_before_shutdown_retries() {
+        let mut mock_poller = mock_poller();
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+        mock_poller.expect_poll().returning(move || {
+            let n = call_count_clone.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                Some(Ok(PollActivityTaskQueueResponse::default()))
+            } else {
+                None
+            }
+        });
+
+        let sem = Arc::new(fixed_size_permit_dealer::<ActivitySlotKind>(10));
+        let shutdown_token = CancellationToken::new();
+
+        let stream = new_activity_task_poller(
+            Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
+            MetricsContext::no_op(),
+            shutdown_token,
+        );
+        pin_mut!(stream);
+
+        // Without shutdown, empty responses should be skipped and the stream terminates
+        // only when the poller returns None.
+        let result = stream.next().await;
+        assert!(
+            result.is_none(),
+            "Stream should end when poller returns None"
+        );
+        assert_eq!(call_count.load(Ordering::SeqCst), 3);
+    }
 }
