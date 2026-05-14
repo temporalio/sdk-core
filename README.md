@@ -141,3 +141,4 @@ Any error which is returned from a public interface should be well-typed, and we
 
 Errors returned from things only used in testing are free to use
 [anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
+
