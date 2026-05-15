@@ -144,10 +144,9 @@ impl MetricsContext {
     fn svc_request_failed_with_label(&self, label: Option<MetricKeyValue>) {
         let refme: MetricAttributes;
         let kvs = if let Some(kv) = label {
-            refme = self.meter.extend_attributes(
-                self.meter.get_default_attributes().clone(),
-                [kv].into(),
-            );
+            refme = self
+                .meter
+                .extend_attributes(self.meter.get_default_attributes().clone(), [kv].into());
             &refme
         } else {
             self.meter.get_default_attributes()

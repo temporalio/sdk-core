@@ -306,7 +306,10 @@ where
         let transport_cancel_retry_allowed =
             e.code() == Code::Cancelled && is_transport_cancelled(&e);
 
-        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed || transport_cancel_retry_allowed {
+        if RETRYABLE_ERROR_CODES.contains(&e.code())
+            || long_poll_allowed
+            || transport_cancel_retry_allowed
+        {
             if current_attempt == 1 {
                 debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name);
             } else {
