@@ -235,7 +235,7 @@ ctx.timer(Duration::from_secs(60)).await;
 
 ```rust
 let started = ctx
-    .child_workflow(
+    .start_child_workflow(
         MyChildWorkflow::run,
         "input",
         ChildWorkflowOptions {

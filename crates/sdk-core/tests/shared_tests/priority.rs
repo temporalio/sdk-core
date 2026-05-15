@@ -57,7 +57,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let child_type = ctx.state(|wf| wf.child_type.clone());
             let started = ctx
-                .child_workflow(
+                .start_child_workflow(
                     UntypedWorkflow::new(&child_type),
                     RawValue::new(vec![]),
                     ChildWorkflowOptions {
