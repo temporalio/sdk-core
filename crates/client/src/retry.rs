@@ -648,9 +648,6 @@ mod tests {
 
     #[tokio::test]
     async fn transport_sourced_cancelled_retried_on_full_budget() {
-        // Verify the behavioral contract: when is_transport_cancelled returns true AND
-        // the code is Cancelled, the error handler retries on the full backoff budget.
-        //
         // NOTE: tonic::Status's public API doesn't allow constructing a Status with both
         // Code::Cancelled AND a transport error source chain. In production, tonic
         // internally builds this when a GOAWAY/connection-close kills an in-flight RPC.
