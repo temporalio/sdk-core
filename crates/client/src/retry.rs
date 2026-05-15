@@ -648,7 +648,6 @@ mod tests {
         assert!(!is_transport_cancelled(&status));
     }
 
-
     #[tokio::test]
     async fn transport_sourced_cancelled_retried_on_full_budget() {
         // NOTE: tonic::Status's public API doesn't allow constructing a Status with both
