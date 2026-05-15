@@ -645,12 +645,6 @@ mod tests {
         assert!(!is_transport_cancelled(&status));
     }
 
-    // NOTE: A positive-path unit test for is_transport_cancelled (i.e., verifying it returns
-    // true for a status with tonic::transport::Error in its source chain) is not feasible
-    // because tonic::Status's public API doesn't allow constructing a Status with both a
-    // custom Code and a transport error source. In production, tonic internally builds this
-    // when a GOAWAY/connection-close kills an in-flight RPC. The detection logic is validated
-    // by the existing codebase's integration tests that exercise real gRPC connections.
 
     #[tokio::test]
     async fn transport_sourced_cancelled_retried_on_full_budget() {
