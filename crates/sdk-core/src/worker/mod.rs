@@ -1376,6 +1376,7 @@ impl Worker {
     ///
     /// You can then wait on `shutdown` or [Worker::finalize_shutdown].
     pub fn initiate_shutdown(&self) {
+        let mut shutdown_rpc_handle = self.shutdown_rpc_handle.lock();
         if !self.shutdown_token.is_cancelled() {
             info!(
                 task_queue=%self.config.task_queue,
@@ -1419,10 +1420,7 @@ impl Worker {
             }
         }
 
-        // Spawn the ShutdownWorker RPC so the server can complete in-flight polls.
-        // The handle is stored and awaited in shutdown() to ensure completion.
-        let mut guard = self.shutdown_rpc_handle.lock();
-        if guard.is_some() || already_initiated_shutdown {
+        if shutdown_rpc_handle.is_some() || already_initiated_shutdown {
             return;
         }
 
@@ -1458,7 +1456,7 @@ impl Worker {
                 _ => {}
             }
         });
-        *guard = Some(handle);
+        *shutdown_rpc_handle = Some(handle);
     }
 
     /// Unique identifier for this worker instance.
