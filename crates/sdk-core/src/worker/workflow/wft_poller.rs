@@ -4,12 +4,12 @@ use crate::{
     pollers::{BoxedWFPoller, LongPollBuffer, Poller, WorkflowTaskOptions, WorkflowTaskPoller},
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
-    worker::{WorkflowSlotKind, client::WorkerClient, wft_poller_behavior},
+    worker::{NamespaceCapabilities, WorkflowSlotKind, client::WorkerClient, wft_poller_behavior},
 };
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
 use std::{
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, OnceLock},
     time::SystemTime,
 };
 use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -26,7 +26,7 @@ pub(crate) fn make_wft_poller(
     wft_slots: &MeteredPermitDealer<WorkflowSlotKind>,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    graceful_poll_shutdown: Arc<AtomicBool>,
+    capabilities: Arc<NamespaceCapabilities>,
 ) -> impl Stream<
     Item = Result<
         (
@@ -60,7 +60,7 @@ pub(crate) fn make_wft_poller(
             wft_poller_shared: wft_poller_shared.clone(),
         },
         last_successful_poll_time,
-        graceful_poll_shutdown.clone(),
+        capabilities.clone(),
     );
     let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
         let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
@@ -76,7 +76,7 @@ pub(crate) fn make_wft_poller(
             }),
             WorkflowTaskOptions { wft_poller_shared },
             sticky_last_successful_poll_time,
-            graceful_poll_shutdown,
+            capabilities,
         )
     });
     let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
@@ -228,11 +228,11 @@ fn new_wft_poller(
                     warn!(error=?e, "Error while polling for workflow tasks");
                     Some((Err(e), (poller, metrics)))
                 }
-                // If poller returns None, it's dead, thus we also return None to terminate this
-                // stream.
+                // If poller returns None, it's dead, thus we also return None to terminate
+                // this stream.
                 None => {
-                    // Make sure we call the actual shutdown function here to propagate any panics
-                    // inside the polling tasks as errors.
+                    // Make sure we call the actual shutdown function here to propagate any
+                    // panics inside the polling tasks as errors.
                     poller.shutdown_box().await;
                     None
                 }
@@ -278,6 +278,25 @@ mod tests {
             MetricsContext::no_op(),
         );
         pin_mut!(stream);
+        assert_matches!(stream.next().await, None);
+    }
+
+    /// When the underlying poller returns None (indicating shutdown), the wrapping WFT stream
+    /// should also return None to terminate.
+    #[tokio::test]
+    async fn poller_returning_none_terminates_wft_stream() {
+        let mut mock_poller = mock_poller();
+        mock_poller.expect_poll().times(1).returning(|| None);
+        mock_poller.expect_shutdown().times(1).returning(|| ());
+
+        let sem = Arc::new(fixed_size_permit_dealer::<WorkflowSlotKind>(10));
+
+        let stream = new_wft_poller(
+            Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
+            MetricsContext::no_op(),
+        );
+        pin_mut!(stream);
+
         assert_matches!(stream.next().await, None);
     }
 

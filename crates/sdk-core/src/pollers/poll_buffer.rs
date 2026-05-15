@@ -2,8 +2,8 @@ use crate::{
     abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::{
-        ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WFTPollerShared,
-        WorkflowSlotKind,
+        ActivitySlotKind, NamespaceCapabilities, NexusSlotKind, PollerBehavior, SlotKind,
+        WFTPollerShared, WorkflowSlotKind,
         client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
     },
 };
@@ -77,7 +77,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: WorkflowTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        graceful_poll_shutdown: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
         let poll_scaler = PollScaler::new(
@@ -140,7 +140,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             poll_scaler,
             pre_permit_delay,
             post_poll_fn,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -156,7 +156,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: ActivityTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        graceful_poll_shutdown: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
@@ -209,7 +209,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             poll_scaler,
             pre_permit_delay,
             None::<fn(&PollActivityTaskQueueResponse)>,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -225,7 +225,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         send_heartbeat: bool,
-        graceful_poll_shutdown: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -262,7 +262,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -288,7 +288,7 @@ where
         mut poll_scaler: PollScaler<F>,
         pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
         post_poll_fn: Option<impl Fn(&T) + Send + Sync + 'static>,
-        graceful_shutdown: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
@@ -359,11 +359,9 @@ where
                         } else {
                             None
                         };
-                    let graceful_shutdown = graceful_shutdown.clone();
+                    let capabilities = capabilities.clone();
                     let poll_task = tokio::spawn(async move {
-                        let shutdown_clone = shutdown.clone();
-
-                        let r = if graceful_shutdown.load(Ordering::Relaxed) {
+                        let r = if capabilities.graceful_poll_shutdown() {
                             pf(timeout_override).await
                         } else {
                             let poll_interruptor = shutdown.cancelled().then(|_| async move {
@@ -383,10 +381,11 @@ where
                         }
                         let (should_forward, backoff_duration) = report_handle.poll_result(&r);
                         if let Some(duration) = backoff_duration {
-                            // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
+                            // Apply backoff BEFORE dropping active_guard to prevent next poll from
+                            // starting
                             tokio::select! {
                                 _ = tokio::time::sleep(duration) => return,
-                                _ = shutdown_clone.cancelled() => (),
+                                _ = shutdown.cancelled() => (),
                             };
                         }
                         drop(active_guard);
@@ -853,7 +852,9 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+            }),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
@@ -910,7 +911,9 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+            }),
         );
 
         // Should not see error, unwraps should get empty response
@@ -987,7 +990,9 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+            }),
         );
 
         let first_task = pb.poll().await.expect("Should get first task");
@@ -1093,7 +1098,9 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+            }),
         ));
 
         // Trigger the first poll to initialize and get the scaling decision
@@ -1113,8 +1120,7 @@ mod tests {
         // With exponential backoff, I'm getting exactly 10 (initial poller count).
         assert!(
             hot_loop_calls == 10,
-            "Expected proper backoff with == 10 polls in 100ms, but got {} polls.",
-            hot_loop_calls
+            "Expected proper backoff with == 10 polls in 100ms, but got {hot_loop_calls} polls."
         );
 
         Arc::try_unwrap(pb)
@@ -1174,7 +1180,9 @@ mod tests {
                 wft_poller_shared: None,
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(graceful)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(graceful),
+            }),
         );
 
         let first = pb.poll().await.unwrap().unwrap();
