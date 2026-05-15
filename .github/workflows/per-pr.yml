@@ -53,6 +53,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
         include:
           - os: windows-latest
+            timeoutMinutes: 20
           - os: ubuntu-latest
           - os: ubuntu-arm
             runsOn: ubuntu-24.04-arm64-2-core
