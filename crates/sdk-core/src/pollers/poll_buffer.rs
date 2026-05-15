@@ -4,7 +4,9 @@ use crate::{
     worker::{
         ActivitySlotKind, NamespaceCapabilities, NexusSlotKind, PollerBehavior, SlotKind,
         WFTPollerShared, WorkflowSlotKind,
-        client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
+        client::{
+            PollActivityOptions, PollNexusOptions, PollOptions, PollWorkflowOptions, WorkerClient,
+        },
     },
 };
 use backoff::{SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
@@ -248,8 +250,8 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        send_heartbeat: bool,
         capabilities: Arc<NamespaceCapabilities>,
+        worker_commands_queue: bool,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -269,7 +271,9 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                             no_retry,
                             timeout_override,
                         },
-                        send_heartbeat,
+                        PollNexusOptions {
+                            worker_commands_queue,
+                        },
                     )
                     .await
             }
