@@ -1,6 +1,5 @@
 use crate::{
     MetricsContext,
-    abstractions::dbg_panic,
     worker::workflow::{
         managed_run::RunUpdateAct,
         run_cache::RunCache,
@@ -260,7 +259,7 @@ impl WFStream {
         let rh = if let Some(rh) = self.runs.get_mut(complete.run_id()) {
             rh
         } else {
-            dbg_panic!("Run missing during completion {:?}", complete);
+            warn!("Run missing during completion {:?}", complete);
             return vec![];
         };
         let mut acts: Vec<_> = match complete {
@@ -329,11 +328,11 @@ impl WFStream {
         if let Some(WFTWithPaginator { wft, .. }) = &wft_from_complete {
             debug!(run_id=%wft.execution.run_id, "New WFT from completion");
             if &wft.execution.run_id != run_id {
-                dbg_panic!(
-                    "Server returned a WFT on completion for a different run ({}) than the \
-                     one being completed ({}). This is a server bug.",
-                    wft.execution.run_id,
-                    run_id
+                warn!(
+                    server_wft_run_id = %wft.execution.run_id,
+                    completed_run_id = %run_id,
+                    "Server returned a WFT on completion for a different run than the one being \
+                     completed. This is a server bug. Ignoring the WFT."
                 );
             }
         }
@@ -385,9 +384,13 @@ impl WFStream {
             // If there happened to be more than one buffered WFT for this run, move them into the
             // now-instantiated run's buffer.
             for wft in maybe_wfts {
+                let rid = wft.work.execution.run_id.clone();
                 let should_be_nothing = self.instantiate_or_update(wft);
                 if should_be_nothing.is_some() {
-                    dbg_panic!("Extra buffered run should not have produced an activation");
+                    warn!(
+                        run_id = %rid,
+                        "Extra buffered run should not have produced an activation"
+                    );
                 }
             }
         }
