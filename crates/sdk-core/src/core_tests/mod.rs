@@ -8,6 +8,7 @@ mod workflow_tasks;
 
 use crate::{
     PollError, Worker,
+    replay::{TestHistoryBuilder, canned_histories},
     test_help::{
         MockPollCfg, build_mock_pollers, mock_worker, single_hist_mock_sg, test_worker_cfg,
     },
@@ -19,7 +20,6 @@ use crate::{
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
 use temporalio_common::protos::{
-    TestHistoryBuilder, canned_histories,
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_completion::WorkflowActivationCompletion,

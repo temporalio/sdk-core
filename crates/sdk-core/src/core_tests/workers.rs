@@ -1,8 +1,10 @@
 use crate::{
     CompleteNexusError, PollError, prost_dur,
+    replay::canned_histories,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
-        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
+        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, start_timer_cmd,
+        test_worker_cfg,
     },
     worker::{
         self, PollerBehavior,
@@ -13,10 +15,17 @@ use crate::{
     },
 };
 use futures_util::{stream, stream::StreamExt};
-use std::{cell::RefCell, collections::HashMap, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use temporalio_common::{
     protos::{
-        canned_histories,
         coresdk::{
             ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
@@ -32,6 +41,7 @@ use temporalio_common::{
                 ApplicationFailureInfo, CanceledFailureInfo, Failure, NexusHandlerFailureInfo,
                 TimeoutFailureInfo, failure::FailureInfo,
             },
+            namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
             nexus::{
                 self,
                 v1::{
@@ -41,17 +51,17 @@ use temporalio_common::{
                 },
             },
             workflowservice::v1::{
-                PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
-                PollWorkflowTaskQueueResponse, RespondActivityTaskCompletedResponse,
-                RespondNexusTaskCompletedResponse, RespondNexusTaskFailedResponse,
-                RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
+                DescribeNamespaceResponse, PollActivityTaskQueueResponse,
+                PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+                RespondActivityTaskCompletedResponse, RespondNexusTaskCompletedResponse,
+                RespondNexusTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
+                ShutdownWorkerResponse,
             },
         },
-        test_utils::start_timer_cmd,
     },
     worker::WorkerTaskTypes,
 };
-use tokio::sync::{Barrier, watch};
+use tokio::sync::{Barrier, Notify, watch};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -427,6 +437,8 @@ fn create_test_nexus_task(
             )),
         }),
         poller_scaling_decision: None,
+        poller_group_id: Default::default(),
+        poller_group_infos: vec![],
     }
 }
 
@@ -1059,6 +1071,7 @@ async fn nexus_start_operation_failure_with_canceled_failure_info() {
                 message: "operation canceled".to_string(),
                 failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                     details: None,
+                    identity: Default::default(),
                 })),
                 ..Default::default()
             },
@@ -1138,6 +1151,7 @@ async fn nexus_start_operation_failure_with_invalid_failure_info(
 #[case::canceled_failure(
     FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
         details: None,
+        identity: Default::default(),
     }),
     NexusOperationErrorState::Canceled
 )]
@@ -1207,5 +1221,108 @@ async fn nexus_start_operation_failure_converts_to_legacy_for_old_server(
         PollError::ShutDown
     );
     worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+/// Verifies that `initiate_shutdown` sends the `ShutdownWorker` RPC so that the server can
+/// complete in-flight polls. Without this, graceful poll shutdown deadlocks: the SDK waits for
+/// polls to drain, but the server was never told to flush them.
+#[tokio::test]
+async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
+    let shutdown_rpc_called = Arc::new(AtomicBool::new(false));
+    let shutdown_rpc_called_clone = shutdown_rpc_called.clone();
+    // When the shutdown_worker RPC fires, it signals polls to complete (simulating server
+    // behavior where ShutdownWorker causes the server to return empty poll responses).
+    let poll_releaser = Arc::new(Notify::new());
+    let poll_releaser_for_rpc = poll_releaser.clone();
+
+    let mut mock_client = MockWorkerClient::new();
+    mock_client
+        .expect_capabilities()
+        .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
+    mock_client
+        .expect_workers()
+        .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
+    mock_client.expect_is_mock().returning(|| true);
+    mock_client
+        .expect_sdk_name_and_version()
+        .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
+    mock_client
+        .expect_identity()
+        .returning(|| "test-identity".to_string());
+    mock_client
+        .expect_worker_grouping_key()
+        .returning(Uuid::new_v4);
+    mock_client
+        .expect_worker_instance_key()
+        .returning(Uuid::new_v4);
+    mock_client
+        .expect_set_heartbeat_client_fields()
+        .returning(|hb| {
+            hb.sdk_name = "test-core".to_string();
+            hb.sdk_version = "0.0.0".to_string();
+            hb.worker_identity = "test-identity".to_string();
+            hb.heartbeat_time = Some(std::time::SystemTime::now().into());
+        });
+    // Return the worker_poll_complete_on_shutdown capability so validate() enables graceful mode
+    mock_client.expect_describe_namespace().returning(move || {
+        Ok(DescribeNamespaceResponse {
+            namespace_info: Some(NamespaceInfo {
+                capabilities: Some(Capabilities {
+                    worker_poll_complete_on_shutdown: true,
+                    ..Capabilities::default()
+                }),
+                ..NamespaceInfo::default()
+            }),
+            ..DescribeNamespaceResponse::default()
+        })
+    });
+    // When shutdown_worker RPC is called, mark it and release polls
+    mock_client
+        .expect_shutdown_worker()
+        .returning(move |_, _, _, _| {
+            shutdown_rpc_called_clone.store(true, Ordering::SeqCst);
+            poll_releaser_for_rpc.notify_waiters();
+            Ok(ShutdownWorkerResponse {})
+        });
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
+
+    // Polls block until shutdown_worker RPC releases them (simulating server holding polls
+    // open until it receives the ShutdownWorker signal)
+    let poll_releaser_for_stream = poll_releaser.clone();
+    let stream = stream::unfold(poll_releaser_for_stream, |releaser| async move {
+        releaser.notified().await;
+        Some((
+            Ok(PollWorkflowTaskQueueResponse::default().try_into().unwrap()),
+            releaser,
+        ))
+    });
+
+    let mw = MockWorkerInputs::new(stream.boxed());
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+
+    // validate() reads describe_namespace and sets capabilities.graceful_poll_shutdown = true
+    worker.validate().await.unwrap();
+
+    let poll_fut = worker.poll_workflow_activation();
+    let shutdown_fut = async {
+        // initiate_shutdown must send the ShutdownWorker RPC, which releases the polls
+        worker.initiate_shutdown();
+    };
+
+    let (poll_result, _) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(poll_fut, shutdown_fut)
+    })
+    .await
+    .expect("Shutdown should complete within 5s -- if it hangs, the ShutdownWorker RPC was not sent during initiate_shutdown");
+
+    assert_matches!(poll_result.unwrap_err(), PollError::ShutDown);
+    assert!(
+        shutdown_rpc_called.load(Ordering::SeqCst),
+        "ShutdownWorker RPC must be called during initiate_shutdown"
+    );
+
     worker.finalize_shutdown().await;
 }

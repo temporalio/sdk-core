@@ -1,5 +1,11 @@
-use crate::protos::{
-    HistoryInfo,
+use crate::{replay::HistoryInfo, test_help::CoreInternalFlags};
+use anyhow::bail;
+use prost_types::Timestamp;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
+use temporalio_common::protos::{
     constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         AsJsonPayloadExt, IntoPayloadsExt,
@@ -21,12 +27,6 @@ use crate::protos::{
         update,
         update::v1::outcome,
     },
-};
-use anyhow::bail;
-use prost_types::Timestamp;
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime},
 };
 use uuid::Uuid;
 
@@ -377,7 +377,10 @@ impl TestHistoryBuilder {
                 stack_trace: "".to_string(),
                 cause: None,
                 failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
-                    CanceledFailureInfo { details: None },
+                    CanceledFailureInfo {
+                        details: None,
+                        identity: Default::default(),
+                    },
                 )),
                 encoded_attributes: Default::default(),
             }),
@@ -596,13 +599,21 @@ impl TestHistoryBuilder {
     }
 
     /// Sets internal patches which should appear in the first WFT complete event
-    pub fn set_flags_first_wft(&mut self, core: &[u32], lang: &[u32]) {
-        Self::set_flags(self.events.iter_mut(), core, lang)
+    pub fn set_flags_first_wft(&mut self, core: &[CoreInternalFlags], lang: &[u32]) {
+        Self::set_flags(
+            self.events.iter_mut(),
+            &core.iter().map(|f| *f as u32).collect::<Vec<_>>(),
+            lang,
+        )
     }
 
     /// Sets internal patches which should appear in the most recent complete event
-    pub fn set_flags_last_wft(&mut self, core: &[u32], lang: &[u32]) {
-        Self::set_flags(self.events.iter_mut().rev(), core, lang)
+    pub fn set_flags_last_wft(&mut self, core: &[CoreInternalFlags], lang: &[u32]) {
+        Self::set_flags(
+            self.events.iter_mut().rev(),
+            &core.iter().map(|f| *f as u32).collect::<Vec<_>>(),
+            lang,
+        )
     }
 
     /// Get the event ID of the most recently added event

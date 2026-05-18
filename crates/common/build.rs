@@ -30,8 +30,10 @@ const SERDE_DERIVE_PREFIXES: &[&str] = &[
     ".grpc",
     ".temporal.api.activity",
     ".temporal.api.batch",
+    ".temporal.api.callback",
     ".temporal.api.cloud",
     ".temporal.api.command",
+    ".temporal.api.compute",
     ".temporal.api.deployment",
     ".temporal.api.filter",
     ".temporal.api.history",
@@ -158,6 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
+                "./protos/api_upstream/temporal/api/sdk/v1/workflow_metadata.proto",
                 "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
                 "./protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
                 "./protos/api_upstream/temporal/api/errordetails/v1/message.proto",

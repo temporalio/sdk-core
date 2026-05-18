@@ -6,26 +6,10 @@ pub mod constants;
 /// Utility functions for working with protobuf types.
 pub mod utilities;
 
-#[cfg(feature = "test-utilities")]
-/// Pre-built test histories for common workflow patterns.
-pub mod canned_histories;
-#[cfg(feature = "history_builders")]
-mod history_builder;
-#[cfg(feature = "history_builders")]
-mod history_info;
 mod task_token;
-#[cfg(feature = "test-utilities")]
-pub mod test_utils;
 
 use std::time::Duration;
 
-#[cfg(feature = "history_builders")]
-pub use history_builder::{
-    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
-    default_wes_attribs,
-};
-#[cfg(feature = "history_builders")]
-pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
 /// Payload metadata key that identifies the encoding format.
@@ -183,6 +167,14 @@ pub mod coresdk {
                 }
             }
 
+            pub fn cancel(fail: APIFailure) -> Self {
+                Self {
+                    status: Some(aer::Status::Cancelled(Cancellation {
+                        failure: Some(fail),
+                    })),
+                }
+            }
+
             pub const fn will_complete_async() -> Self {
                 Self {
                     status: Some(aer::Status::WillCompleteAsync(WillCompleteAsync {})),
@@ -315,6 +307,7 @@ pub mod coresdk {
                         failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                             CanceledFailureInfo {
                                 details: details.map(Into::into),
+                                identity: Default::default(),
                             },
                         )),
                         ..Default::default()
@@ -1338,6 +1331,7 @@ pub mod coresdk {
                         retry_policy: r.retry_policy.map(fix_retry_policy),
                         priority: r.priority,
                         is_local: false,
+                        run_id: r.activity_run_id,
                     },
                 )),
             }
@@ -1651,6 +1645,11 @@ pub mod temporal {
         pub mod batch {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.batch.v1");
+            }
+        }
+        pub mod callback {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.callback.v1");
             }
         }
         pub mod command {
@@ -2179,6 +2178,11 @@ pub mod temporal {
                 }
             }
         }
+        pub mod compute {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.compute.v1");
+            }
+        }
         pub mod deployment {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.deployment.v1");
@@ -2413,6 +2417,8 @@ pub mod temporal {
                                 Attributes::WorkflowExecutionPausedEventAttributes(_) => true,
                                 // !! Ignorable !!
                                 Attributes::WorkflowExecutionUnpausedEventAttributes(_) => true,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionTimeSkippingTransitionedEventAttributes(_) => true,
                             }
                         } else {
                             false
@@ -2494,6 +2500,7 @@ pub mod temporal {
                             Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => { EventType::NexusOperationCancelRequestFailed }
                             Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
                             Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
+                            Attributes::WorkflowExecutionTimeSkippingTransitionedEventAttributes(_) => { EventType::WorkflowExecutionTimeSkippingTransitioned }
                         }
                     }
                 }
@@ -2931,8 +2938,51 @@ pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time:
 
 #[cfg(test)]
 mod tests {
-    use crate::protos::temporal::api::failure::v1::Failure;
+    use crate::protos::{
+        coresdk::{activity_task, activity_task::ActivityTask},
+        temporal::api::{failure::v1::Failure, workflowservice::v1::PollActivityTaskQueueResponse},
+    };
     use anyhow::anyhow;
+
+    #[test]
+    fn start_from_poll_resp_standalone_activity_populates_run_id() {
+        let resp = PollActivityTaskQueueResponse {
+            task_token: vec![1, 2, 3],
+            activity_run_id: "test-run-id-123".to_string(),
+            activity_id: "my-activity".to_string(),
+            ..Default::default()
+        };
+        let task = ActivityTask::start_from_poll_resp(resp);
+        let start = match task.variant {
+            Some(activity_task::activity_task::Variant::Start(s)) => s,
+            _ => panic!("expected Start variant"),
+        };
+        assert_eq!(start.run_id, "test-run-id-123");
+        assert!(!start.is_local);
+    }
+
+    #[test]
+    fn start_from_poll_resp_workflow_activity_has_empty_run_id() {
+        use crate::protos::temporal::api::common::v1::WorkflowExecution;
+        let resp = PollActivityTaskQueueResponse {
+            task_token: vec![4, 5, 6],
+            activity_id: "my-workflow-activity".to_string(),
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: "wf-123".to_string(),
+                run_id: "wf-run-456".to_string(),
+            }),
+            // activity_run_id intentionally absent — this is a workflow-scheduled activity
+            ..Default::default()
+        };
+        let task = ActivityTask::start_from_poll_resp(resp);
+        let start = match task.variant {
+            Some(activity_task::activity_task::Variant::Start(s)) => s,
+            _ => panic!("expected Start variant"),
+        };
+        assert!(start.run_id.is_empty());
+        // workflow_execution is preserved and distinct from run_id
+        assert_eq!(start.workflow_execution.unwrap().run_id, "wf-run-456");
+    }
 
     #[test]
     fn anyhow_to_failure_conversion() {

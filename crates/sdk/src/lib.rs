@@ -1,6 +1,6 @@
 #![warn(missing_docs)] // error if there are missing docs
 
-//! This crate defines an alpha-stage Temporal Rust SDK.
+//! This crate defines a Public Preview Temporal Rust SDK.
 //!
 //! Currently defining activities and running an activity-only worker is the most stable code.
 //! Workflow definitions exist and running a workflow worker works, but the API is still very
@@ -72,8 +72,10 @@ extern crate tracing;
 extern crate self as temporalio_sdk;
 
 pub mod activities;
+pub mod error;
 pub mod interceptors;
 mod workflow_context;
+mod workflow_executor;
 mod workflow_future;
 pub mod workflows;
 
@@ -95,13 +97,18 @@ macro_rules! __temporal_join {
 
 use workflow_future::WorkflowFunction;
 
+pub use error::{
+    ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
+    ChildWorkflowSignalError, ChildWorkflowStartError, OutgoingActivityError, OutgoingError,
+    OutgoingWorkflowError,
+};
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
-    ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal,
-    SignalData, SignalWorkflowOptions, StartChildWorkflowExecutionFailedCause,
-    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
+    ActivityCloseTimeouts, ActivityOptions, BaseWorkflowContext, CancellableFuture,
+    ChildWorkflowOptions, ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions,
+    NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
+    StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
+    TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{
@@ -113,6 +120,7 @@ use crate::{
     workflow_context::{
         ChildWfCommon, NexusUnblockData, PendingChildWorkflow, StartedNexusOperation,
     },
+    workflow_executor::WorkflowExecutor,
     workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
@@ -152,9 +160,7 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            common::v1::Payload,
-            enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{Failure, failure},
+            common::v1::Payload, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -163,13 +169,10 @@ use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, TunerBuilder, Worker as CoreWorker, WorkerConfig,
     WorkerTuner, WorkerVersioningStrategy, WorkflowErrorType, init_worker,
 };
-use tokio::{
-    sync::{
-        Notify,
-        mpsc::{UnboundedSender, unbounded_channel},
-        oneshot,
-    },
-    task::JoinError,
+use tokio::sync::{
+    Notify,
+    mpsc::{UnboundedSender, unbounded_channel},
+    oneshot,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -274,6 +277,11 @@ pub struct WorkerOptions {
     /// If set, the worker will issue cancels for all outstanding activities and nexus operations after
     /// shutdown has been initiated and this amount of time has elapsed.
     pub graceful_shutdown_period: Option<Duration>,
+    /// Detect nondeterministic async usage in workflow code. When enabled (the default), workflows
+    /// that use external async operations (tokio timers, IO, spawned threads, raw tokio::sync
+    /// channels, etc.) will have their tasks failed with a descriptive error.
+    #[builder(default = true)]
+    pub detect_nondeterministic_futures: bool,
 }
 
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
@@ -433,19 +441,19 @@ struct CommonWorker {
     data_converter: DataConverter,
 }
 
-#[derive(Default)]
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
+    detect_nondeterministic_futures: bool,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
 }
 
-struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, JoinError>>> {
+struct WorkflowFutureHandle<F: Future> {
     join_handle: F,
     run_id: String,
 }
@@ -476,6 +484,7 @@ impl Worker {
             Default::default(),
             Default::default(),
         );
+        me.set_detect_nondeterministic_futures(options.detect_nondeterministic_futures);
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
         Ok(me)
@@ -508,8 +517,10 @@ impl Worker {
                 data_converter,
             },
             workflow_half: WorkflowHalf {
+                workflows: Default::default(),
                 workflow_definitions: workflows,
-                ..Default::default()
+                workflow_removed_from_map: Default::default(),
+                detect_nondeterministic_futures: false,
             },
             activity_half: ActivityHalf {
                 activities,
@@ -521,6 +532,13 @@ impl Worker {
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
         &self.common.task_queue
+    }
+
+    #[doc(hidden)]
+    /// Set whether nondeterministic future detection is enabled for workflows on this worker. Users
+    /// should use [WorkerOptions] to set this. TODO: Only needs to exist due to test setup.
+    pub fn set_detect_nondeterministic_futures(&mut self, enabled: bool) {
+        self.workflow_half.detect_nondeterministic_futures = enabled;
     }
 
     /// Return a handle that can be used to initiate shutdown. This is useful because [Worker::run]
@@ -577,12 +595,17 @@ impl Worker {
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
         let (common, wf_half, act_half) = self.split_apart();
-        let (wf_future_tx, wf_future_rx) = unbounded_channel();
+        let (wf_future_tx, wf_future_rx) = unbounded_channel::<
+            WorkflowFutureHandle<workflow_executor::TaskHandle<WorkflowResult<Payload>>>,
+        >();
         let (completions_tx, completions_rx) = unbounded_channel();
 
         // Workflows run in a LocalSet because they use Rc<RefCell> for state management.
-        // This allows them to not require Send/Sync bounds.
+        // This allows them to not require Send/Sync bounds. The WorkflowExecutor replaces
+        // tokio::task::spawn_local for workflow tasks and provides custom wakers for
+        // nondeterminism detection.
         let workflow_local_set = tokio::task::LocalSet::new();
+        let executor = WorkflowExecutor::new();
 
         let wf_future_joiner = async {
             UnboundedReceiverStream::new(wf_future_rx)
@@ -595,13 +618,13 @@ impl Worker {
                      }| {
                         let wf_half = &*wf_half;
                         async move {
-                            let result = join_handle.await?;
+                            let result = join_handle.await.map_err(anyhow::Error::new)?;
                             // Eviction is normal workflow lifecycle - workflows loop waiting for
                             // eviction after completion to manage cache cleanup
                             if let Err(e) = result
                                 && !matches!(e, WorkflowTermination::Evicted)
                             {
-                                return Err(e.into());
+                                return Err(anyhow::Error::new(e));
                             }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
@@ -662,6 +685,7 @@ impl Worker {
                                     shutdown_token.clone(),
                                     activation,
                                     &completions_tx,
+                                    &executor,
                                 )
                                 .await?
                                 && wf_future_tx.send(wf_fut).is_err()
@@ -670,6 +694,9 @@ impl Worker {
                                     "Receive half of completion processor channel cannot be dropped"
                                 );
                             }
+                            // Drive the executor so spawned tasks and sent activations make
+                            // progress.
+                            executor.process_tasks();
                         }
                         // Tell still-alive workflows to evict themselves
                         shutdown_token.cancel();
@@ -677,6 +704,7 @@ impl Worker {
                         // terminate.
                         drop(wf_future_tx);
                         drop(completions_tx);
+                        executor.shutdown().await;
                         Result::<_, anyhow::Error>::Ok(())
                     },
                     wf_future_joiner,
@@ -764,12 +792,9 @@ impl WorkflowHalf {
         shutdown_token: CancellationToken,
         mut activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
+        executor: &WorkflowExecutor,
     ) -> Result<
-        Option<
-            WorkflowFutureHandle<
-                impl Future<Output = Result<WorkflowResult<Payload>, JoinError>> + use<>,
-            >,
-        >,
+        Option<WorkflowFutureHandle<workflow_executor::TaskHandle<WorkflowResult<Payload>>>>,
         anyhow::Error,
     > {
         let mut res = None;
@@ -782,7 +807,6 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
-            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
@@ -791,7 +815,8 @@ impl WorkflowHalf {
                         run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
-                        payload_converter,
+                        common.data_converter.clone(),
+                        self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
                         Err(e) => {
@@ -818,11 +843,8 @@ impl WorkflowHalf {
                     return Ok(None);
                 }
             };
-            // Wrap in unconstrained to prevent Tokio from imposing limits on commands per poll
             // TODO [rust-sdk-branch]: Deadlock detection
-            let wff = tokio::task::unconstrained(wff);
-            // The LocalSet is created in Worker::run().
-            let jh = tokio::task::spawn_local(async move {
+            let jh = executor.spawn(async move {
                 tokio::select! {
                     r = wff.fuse() => r,
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
@@ -920,6 +942,7 @@ impl ActivityHalf {
 
                 let (ctx, args) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let activity_data_converter = data_converter.clone();
                 let codec_data_converter = data_converter.clone();
 
                 tokio::spawn(async move {
@@ -929,42 +952,42 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn)(args, data_converter, ctx).await
+                        (act_fn)(args, activity_data_converter, ctx).await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
+                    let activity_context = SerializationContextData::Activity;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
-                            format!("Activity function panicked: {}", panic_formatter(e)),
-                            true,
-                        )),
+                        Err(e) => ActivityExecutionResult::fail(
+                            data_converter.to_failure(
+                                &activity_context,
+                                OutgoingError::Activity(OutgoingActivityError::Application(
+                                    ApplicationFailure::new(anyhow!(
+                                        "Activity function panicked: {}",
+                                        panic_formatter(e)
+                                    ))
+                                    .into(),
+                                )),
+                            ),
+                        ),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
-                            ActivityError::Retryable {
-                                source,
-                                explicit_delay,
-                            } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(source),
-                                    false,
-                                );
-                                if let Some(d) = explicit_delay
-                                    && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
-                                        f.failure_info.as_mut()
-                                {
-                                    fi.next_retry_delay = d.try_into().ok();
-                                }
-                                f
-                            }),
-                            ActivityError::Cancelled { details } => {
-                                ActivityExecutionResult::cancel_from_details(details)
+                            ActivityError::Application(app) => {
+                                ActivityExecutionResult::fail(data_converter.to_failure(
+                                    &activity_context,
+                                    OutgoingError::Activity(OutgoingActivityError::Application(
+                                        app,
+                                    )),
+                                ))
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(nre),
-                                    true,
-                                ),
-                            ),
+                            ActivityError::Cancelled { details } => {
+                                ActivityExecutionResult::cancel(data_converter.to_failure(
+                                    &activity_context,
+                                    OutgoingError::Activity(OutgoingActivityError::Cancelled {
+                                        details,
+                                    }),
+                                ))
+                            }
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
@@ -1231,7 +1254,7 @@ pub enum WorkflowTermination {
 
     /// The workflow failed with an error.
     #[error("Workflow failed: {0}")]
-    Failed(#[source] anyhow::Error),
+    Failed(#[source] OutgoingWorkflowError),
 }
 
 impl WorkflowTermination {
@@ -1240,33 +1263,54 @@ impl WorkflowTermination {
         Self::ContinueAsNew(Box::new(can))
     }
 
-    /// Construct a [WorkflowTermination::Failed] variant from any error.
-    pub fn failed(err: impl Into<anyhow::Error>) -> Self {
+    /// Construct a [WorkflowTermination::Failed] variant from an application failure.
+    pub fn failed_application(err: ApplicationFailure) -> Self {
         Self::Failed(err.into())
     }
 }
 
 impl From<anyhow::Error> for WorkflowTermination {
     fn from(err: anyhow::Error) -> Self {
-        Self::Failed(err)
+        Self::Failed(err.into())
+    }
+}
+
+impl From<temporalio_common::data_converters::PayloadConversionError> for WorkflowTermination {
+    fn from(err: temporalio_common::data_converters::PayloadConversionError) -> Self {
+        Self::Failed(err.into())
+    }
+}
+
+impl From<workflows::WorkflowError> for WorkflowTermination {
+    fn from(err: workflows::WorkflowError) -> Self {
+        match err {
+            workflows::WorkflowError::PayloadConversion(e) => Self::from(e),
+            workflows::WorkflowError::Execution(e) => Self::from(e),
+        }
     }
 }
 
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowExecutionError> for WorkflowTermination {
     fn from(value: ChildWorkflowExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
+    }
+}
+
+impl From<ChildWorkflowStartError> for WorkflowTermination {
+    fn from(value: ChildWorkflowStartError) -> Self {
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowSignalError> for WorkflowTermination {
     fn from(value: ChildWorkflowSignalError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
@@ -1305,6 +1349,7 @@ fn _panic_formatter<T: 'static + PrintablePanicType>(panic: Box<dyn Any>) -> Box
 trait PrintablePanicType: Display {
     type NextType: PrintablePanicType;
 }
+
 impl PrintablePanicType for &str {
     type NextType = String;
 }
@@ -1355,11 +1400,15 @@ mod tests {
     #[allow(unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
         let wf_ctx: WorkflowContext<MyWorkflow> = unimplemented!();
-        wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
+        wf_ctx.start_activity(
+            MyActivities::my_activity,
+            (),
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+        );
         wf_ctx.start_activity(
             MyActivities::takes_self,
             "Hi".to_owned(),
-            ActivityOptions::default(),
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
         );
     }
 

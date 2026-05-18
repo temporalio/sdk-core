@@ -19,7 +19,6 @@ use temporalio_client::{
 };
 use temporalio_common::{
     data_converters::RawValue,
-    prost_dur,
     protos::{
         coresdk::{
             ActivityTaskCompletion,
@@ -37,7 +36,6 @@ use temporalio_common::{
             enums::v1::{EventType, ResetReapplyType},
             workflowservice::v1::{ResetStickyTaskQueueRequest, ResetWorkflowExecutionRequest},
         },
-        test_utils::start_timer_cmd,
     },
     worker::WorkerTaskTypes,
 };
@@ -48,9 +46,9 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
-    Worker,
+    Worker, prost_dur,
     replay::HistoryForReplay,
-    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown, start_timer_cmd},
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;
@@ -1119,10 +1117,7 @@ async fn worker_restarted_in_middle_of_update() {
             ctx.start_activity(
                 BlockingActivities::blocks,
                 "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
             )
             .await?;
             Ok(())
@@ -1168,7 +1163,7 @@ async fn worker_restarted_in_middle_of_update() {
         // Allow it to start again, the second time
         BARR.wait().await;
         // Poke the workflow off the sticky queue to get it to complete faster than WFT timeout
-        WorkflowService::reset_sticky_task_queue(
+        let _ = WorkflowService::reset_sticky_task_queue(
             &mut client.clone(),
             ResetStickyTaskQueueRequest {
                 namespace: client.namespace(),
@@ -1179,8 +1174,7 @@ async fn worker_restarted_in_middle_of_update() {
             }
             .into_request(),
         )
-        .await
-        .unwrap();
+        .await;
     };
     let run = async {
         // This run attempt will get shut down
@@ -1224,10 +1218,7 @@ async fn update_after_empty_wft() {
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
+                        ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                     )
                     .await;
                 ACT_STARTED.store(false, Ordering::Release);
@@ -1252,10 +1243,7 @@ async fn update_after_empty_wft() {
                 .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                 )
                 .await;
         }
@@ -1325,10 +1313,7 @@ async fn update_lost_on_activity_mismatch() {
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
+                        ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                     )
                     .await;
                 ctx.state_mut(|s| s.can_run -= 1);

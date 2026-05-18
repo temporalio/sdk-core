@@ -3,10 +3,10 @@
 [![crates.io](https://img.shields.io/crates/v/temporalio-sdk.svg)](https://crates.io/crates/temporalio-sdk)
 [![docs.rs](https://docs.rs/temporalio-sdk/badge.svg)](https://docs.rs/temporalio-sdk)
 
-This crate contains a prerelease Rust SDK. The SDK is built on top of
+This crate contains a Public Preview Rust SDK. The SDK is built on top of
 Core and provides a native Rust experience for writing Temporal workflows and activities.
 
-⚠️ **The SDK is under active development and should be considered prerelease.** The API can and
+⚠️ **The SDK is in Public Preview and under active development.** The API can and
 will continue to evolve.
 
 ## Quick Start
@@ -68,10 +68,7 @@ impl GreetingWorkflow {
         let greeting = ctx.start_activity(
             MyActivities::greet,
             name,
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(10)),
-                ..Default::default()
-            }
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(10))
         )?.await?;
 
         Ok(greeting)
@@ -81,20 +78,24 @@ impl GreetingWorkflow {
 
 ### Running a Worker
 
+The simplest way to configure a connection is with environment variables and/or a `temporal.toml`
+config file. See the [`envconfig` module docs](https://docs.rs/temporalio-client/latest/temporalio_client/envconfig/) for supported variables and
+the TOML format.
+
 ```rust
-use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
+use temporalio_client::{Client, ClientOptions, Connection, envconfig::LoadClientConfigProfileOptions};
 use temporalio_sdk::{Worker, WorkerOptions};
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
-use std::str::FromStr;
+use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = CoreRuntime::new_assume_tokio(RuntimeOptions::builder().build()?)?;
 
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build()
-    ).await?;
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     let worker_options = WorkerOptions::new("my-task-queue")
         .register_activities(MyActivities { counter: Default::default() })
@@ -105,6 +106,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Crate Features
+
+The SDK enables a few convenience integrations by default. Users who want a smaller dependency
+graph can disable defaults and opt back into the integrations they use:
+
+```toml
+temporalio-sdk = { version = "0.3", default-features = false, features = ["envconfig"] }
+```
+
+- `envconfig` - enabled by default. Adds `ClientOptions::load_from_config` and related helpers for
+  loading connection settings from environment variables and `temporal.toml` files.
+- `prometheus` - enabled by default. Adds the Prometheus metrics exporter in
+  `temporalio_common::telemetry` for serving SDK metrics from a HTTP endpoint.
+- `otel` - optional. Adds the OpenTelemetry metrics exporter in `temporalio_common::telemetry` for
+  sending SDK metrics to an OpenTelemetry collector.
 
 ## Workflows in detail
 
@@ -171,6 +188,42 @@ Workflow code must be deterministic. This means:
   - `join!` — deterministic join for a fixed number of futures
   - `join_all` — deterministic join for a dynamic collection of futures
 
+### Runtime Nondeterminism Detection
+
+The Rust SDK includes a runtime nondeterminism detector that monitors async wake sources inside
+workflow code. It is **enabled by default** and can be disabled via
+`WorkerOptions::detect_nondeterministic_futures(false)`.
+
+**How it works:** The SDK tracks which async wake-ups originate from SDK-provided primitives (timers,
+activities, child workflows, etc.) versus external sources. When a non-SDK wake is detected, the
+workflow task is failed with a descriptive error.
+
+**What it catches:**
+
+- `tokio::time::sleep` / `tokio::time::interval` -- use `ctx.timer()` instead
+- `tokio::net` / `tokio::fs` / any async IO -- perform IO in activities, not workflows
+- `tokio::spawn` -- do not spawn tasks from workflow code
+- `std::thread::spawn` with async channels -- all cross-thread wakes are flagged
+- Direct use of `tokio::sync` channels (oneshot, mpsc, watch) -- use `ctx.state_mut()` +
+  `ctx.wait_condition()` for inter-future coordination instead
+
+**Detection timing:** Detection is based on observing non-SDK wake sources. Because these wakes fire
+asynchronously (e.g., a tokio timer fires after the activation that started it), the failure is
+typically reported on the *next* workflow task, not the one that introduced the nondeterministic
+code. The workflow task that started the operation completes normally; the subsequent task fails
+with the detection error. The server then retries from that point.
+
+**What it does NOT catch:**
+
+- `futures::select!` without `biased` -- randomizes poll order within a single poll. Use
+  `workflows::select!` or `futures::select! { biased; ... }` for deterministic ordering
+- Any combinator that only affects the order in which ready futures are polled
+- Purely synchronous nondeterminism (e.g., `std::time::SystemTime::now()`, `rand::random()`)
+
+**Disabling detection:** Set `detect_nondeterministic_futures(false)` on `WorkerOptions`. This may
+be useful during migration or for advanced users who understand the determinism constraints and want
+to use patterns that trigger false positives.
+
 ### Timers
 
 ```rust
@@ -197,12 +250,8 @@ let result = started.result().await?;
 ### Continue-As-New
 
 ```rust
-// To continue as new, return an error with WorkflowTermination::ContinueAsNew
-Err(WorkflowTermination::continue_as_new(ContinueAsNewWorkflowExecution {
-    workflow_type: "MyWorkflow".to_string(),
-    arguments: vec![new_input.into()],
-    ..Default::default()
-}))
+// To continue as new, use the workflow context helper and propagate the termination
+ctx.continue_as_new(&new_input, ContinueAsNewOptions::default())?;
 ```
 
 ### Patching (Versioning)
@@ -242,8 +291,7 @@ work.
 
 Activities return `Result<T, ActivityError>` with the following error types:
 
-- **`ActivityError::Retryable`** - Transient failure, will be retried
-- **`ActivityError::NonRetryable`** - Permanent failure, will not be retried
+- **`ActivityError::Application`** - Application failure metadata is carried by `ApplicationFailure`
 - **`ActivityError::Cancelled`** - Activity was cancelled
 - **`ActivityError::WillCompleteAsync`** - Activity will complete asynchronously
 
@@ -305,22 +353,18 @@ among other operations.
 
 ```rust
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions,
+    Client, ClientOptions, Connection,
+    envconfig::LoadClientConfigProfileOptions,
     WorkflowOptions, GetWorkflowResultOptions,
 };
-use temporalio_sdk_core::{Url, CoreRuntime, RuntimeOptions};
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?)
-            .identity("my-client".to_string())
-            .build()
-    ).await?;
-
-    // "default" is your namespace
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     // Start a workflow
     let handle = client.start_workflow(
@@ -416,3 +460,18 @@ while let Some(result) = stream.next().await {
     println!("Workflow: {} ({})", execution.id(), execution.workflow_type());
 }
 ```
+
+## Failure Conversion and Error Wrapping
+
+The default failure converter preserves Temporal failure types when errors cross workflow or
+activity boundaries.
+
+This matters when Rust error propagation wraps Temporal SDK error types, e.g. `anyhow::Error`.
+When an `ApplicationFailure` is created from an error whose source is a known Temporal SDK error, the
+converter skips the outer error for the failure cause and encodes the known Temporal error
+directly. The application failure's own message and metadata are still preserved.
+
+This keeps the Rust SDK's `Failure`s aligned with other Temporal SDKs: SDK error types
+remain represented as Temporal failure types, while unknown Rust error types are encoded as
+application failures.
+

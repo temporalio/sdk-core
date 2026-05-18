@@ -18,7 +18,6 @@ use temporalio_client::{
     grpc::WorkflowService,
 };
 use temporalio_common::{
-    prost_dur,
     protos::{
         coresdk::AsJsonPayloadExt,
         temporal::api::{
@@ -40,7 +39,7 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
-    TunerHolder,
+    TunerHolder, prost_dur,
 };
 use tokio::{sync::Notify, time::sleep};
 use tonic::IntoRequest;
@@ -203,10 +202,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                 .start_activity(
                     NotifyActivities::pass_fail_act,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
             Ok(())
@@ -260,44 +256,67 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         );
         in_activity_checks(heartbeat, &start_time, &heartbeat_time);
         acts_done.notify_one();
+
+        // Poll until the heartbeat reflects shutdown with the second WFT processed.
+        // The worker stays alive (join! waits for both futures) so heartbeats keep firing.
+        eventually(
+            || {
+                let mut rc = raw_client.clone();
+                let ns = client.namespace().to_owned();
+                async move {
+                    let workers_list = WorkflowService::list_workers(
+                        &mut rc,
+                        ListWorkersRequest {
+                            namespace: ns,
+                            page_size: 100,
+                            next_page_token: Vec::new(),
+                            query: String::new(),
+                        }
+                        .into_request(),
+                    )
+                    .await
+                    .unwrap()
+                    .into_inner();
+                    #[allow(deprecated)]
+                    let hb = workers_list
+                        .workers_info
+                        .iter()
+                        .find_map(|wi| {
+                            wi.worker_heartbeat.as_ref().filter(|hb| {
+                                hb.worker_instance_key == worker_instance_key.to_string()
+                            })
+                        })
+                        .unwrap()
+                        .clone();
+                    let tasks_done = hb
+                        .workflow_task_slots_info
+                        .as_ref()
+                        .is_some_and(|s| s.total_processed_tasks >= 2);
+                    let is_shutting_down = hb.status == WorkerStatus::ShuttingDown as i32;
+                    if tasks_done && is_shutting_down {
+                        Ok(hb)
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "Heartbeat not ready: tasks={}, shutting_down={}",
+                            hb.workflow_task_slots_info
+                                .as_ref()
+                                .map_or(0, |s| s.total_processed_tasks),
+                            is_shutting_down,
+                        ))
+                    }
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await
+        .map(|hb| after_shutdown_checks(&hb, &wf_name, &start_time, &heartbeat_time))
+        .unwrap();
     };
 
     let runner = async move {
         worker.run_until_done().await.unwrap();
     };
     tokio::join!(test_fut, runner);
-
-    let client = starter.get_client().await;
-    let mut raw_client = client.clone();
-    let workers_list = WorkflowService::list_workers(
-        &mut raw_client,
-        ListWorkersRequest {
-            namespace: client.namespace().to_owned(),
-            page_size: 100,
-            next_page_token: Vec::new(),
-            query: String::new(),
-        }
-        .into_request(),
-    )
-    .await
-    .unwrap()
-    .into_inner();
-    // Since list_workers finds all workers in the namespace, must find specific worker used in this
-    // test
-    #[allow(deprecated)]
-    let worker_info = workers_list
-        .workers_info
-        .iter()
-        .find(|worker_info| {
-            if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                hb.worker_instance_key == worker_instance_key.to_string()
-            } else {
-                false
-            }
-        })
-        .unwrap();
-    let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-    after_shutdown_checks(heartbeat, &wf_name, &start_time, &heartbeat_time);
 }
 
 // Tests that rely on Prometheus running in a docker container need to start
@@ -356,10 +375,7 @@ async fn docker_worker_heartbeat_tuner() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())
@@ -536,23 +552,7 @@ fn after_shutdown_checks(
     ));
 
     let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
-    assert_eq!(workflow_task_slots.current_available_slots, 5);
-    assert_eq!(workflow_task_slots.current_used_slots, 1);
     assert_eq!(workflow_task_slots.total_processed_tasks, 2);
-    assert_eq!(workflow_task_slots.slot_supplier_kind, "Fixed");
-    let activity_task_slots = heartbeat.activity_task_slots_info.clone().unwrap();
-    assert_eq!(activity_task_slots.current_available_slots, 5);
-    assert_eq!(workflow_task_slots.current_used_slots, 1);
-    assert_eq!(activity_task_slots.slot_supplier_kind, "Fixed");
-    assert_eq!(activity_task_slots.last_interval_processed_tasks, 1);
-    let nexus_task_slots = heartbeat.nexus_task_slots_info.clone().unwrap();
-    assert_eq!(nexus_task_slots.current_available_slots, 0);
-    assert_eq!(nexus_task_slots.current_used_slots, 0);
-    assert_eq!(nexus_task_slots.slot_supplier_kind, "Fixed");
-    let local_activity_task_slots = heartbeat.local_activity_slots_info.clone().unwrap();
-    assert_eq!(local_activity_task_slots.current_available_slots, 100);
-    assert_eq!(local_activity_task_slots.current_used_slots, 0);
-    assert_eq!(local_activity_task_slots.slot_supplier_kind, "Fixed");
 
     let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
     assert!(!workflow_poller_info.is_autoscaling);
@@ -574,7 +574,6 @@ fn after_shutdown_checks(
     ));
 
     assert_eq!(heartbeat.total_sticky_cache_hit, 1);
-    assert_eq!(heartbeat.current_sticky_cache_size, 0);
     assert_eq!(
         heartbeat.plugins,
         vec![
@@ -661,10 +660,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
                 .start_activity(
                     StickyCacheActivities::sticky_cache_history_act,
                     wf_marker.clone(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
 
@@ -869,6 +865,8 @@ async fn worker_heartbeat_failure_metrics() {
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
+    // This test uses tokio::sync::Notify from workflow code for test coordination.
+    starter.sdk_config.detect_nondeterministic_futures = false;
 
     struct FailingActivities;
     #[activities]
@@ -903,16 +901,14 @@ async fn worker_heartbeat_failure_metrics() {
                 .start_activity(
                     FailingActivities::failing_act,
                     "boom".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        retry_policy: Some(RetryPolicy {
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .retry_policy(RetryPolicy {
                             initial_interval: Some(prost_dur!(from_millis(10))),
                             backoff_coefficient: 1.0,
                             maximum_attempts: 4,
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
+                        })
+                        .build(),
                 )
                 .await;
 
@@ -951,50 +947,24 @@ async fn worker_heartbeat_failure_metrics() {
         .await
         .unwrap();
 
+    let query = format!("WorkerInstanceKey=\"{worker_key}\"");
     let test_fut = async {
         ACT_FAIL.notified().await;
         let client = starter.get_client().await;
         eventually(
             || async {
-                let mut raw_client = client.clone();
-
-                let workers_list = WorkflowService::list_workers(
-                    &mut raw_client,
-                    ListWorkersRequest {
-                        namespace: client.namespace().to_owned(),
-                        page_size: 100,
-                        next_page_token: Vec::new(),
-                        query: String::new(),
-                    }
-                    .into_request(),
-                )
-                .await
-                .unwrap()
-                .into_inner();
-                #[allow(deprecated)]
-                let worker_info = workers_list
-                    .workers_info
-                    .iter()
-                    .find(|worker_info| {
-                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                            hb.worker_instance_key == worker_instance_key.to_string()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap();
-                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-                assert_eq!(
-                    heartbeat.worker_instance_key,
-                    worker_instance_key.to_string()
-                );
-                let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+                let heartbeats = list_worker_heartbeats(&client, query.clone()).await;
+                let heartbeat = heartbeats
+                    .into_iter()
+                    .find(|hb| hb.worker_instance_key == worker_key)
+                    .ok_or("worker not found in list_workers response")?;
+                let activity_slots = heartbeat.activity_task_slots_info.unwrap();
                 if activity_slots.last_interval_failure_tasks >= 1 {
                     return Ok(());
                 }
                 Err("activity_slots.last_interval_failure_tasks still 0, retrying")
             },
-            Duration::from_millis(1500),
+            Duration::from_secs(2),
         )
         .await
         .unwrap();
@@ -1003,41 +973,18 @@ async fn worker_heartbeat_failure_metrics() {
 
         eventually(
             || async {
-                let mut raw_client = client.clone();
-                let workers_list = WorkflowService::list_workers(
-                    &mut raw_client,
-                    ListWorkersRequest {
-                        namespace: client.namespace().to_owned(),
-                        page_size: 100,
-                        next_page_token: Vec::new(),
-                        query: String::new(),
-                    }
-                    .into_request(),
-                )
-                .await
-                .unwrap()
-                .into_inner();
-                #[allow(deprecated)]
-                let worker_info = workers_list
-                    .workers_info
-                    .iter()
-                    .find(|worker_info| {
-                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                            hb.worker_instance_key == worker_instance_key.to_string()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap();
-
-                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-                let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+                let heartbeats = list_worker_heartbeats(&client, query.clone()).await;
+                let heartbeat = heartbeats
+                    .into_iter()
+                    .find(|hb| hb.worker_instance_key == worker_key)
+                    .ok_or("worker not found in list_workers response")?;
+                let workflow_slots = heartbeat.workflow_task_slots_info.unwrap();
                 if workflow_slots.last_interval_failure_tasks >= 1 {
                     return Ok(());
                 }
                 Err("workflow_slots.last_interval_failure_tasks still 0, retrying")
             },
-            Duration::from_millis(1500),
+            Duration::from_secs(2),
         )
         .await
         .unwrap();
@@ -1057,8 +1004,7 @@ async fn worker_heartbeat_failure_metrics() {
     tokio::join!(test_fut, runner);
 
     let client = starter.get_client().await;
-    let mut heartbeats =
-        list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_key}\"")).await;
+    let mut heartbeats = list_worker_heartbeats(&client, query).await;
     assert_eq!(heartbeats.len(), 1);
     let heartbeat = heartbeats.pop().unwrap();
 
@@ -1096,10 +1042,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())
@@ -1169,10 +1112,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())

@@ -1,12 +1,12 @@
 [package]
 name = "temporalio-common"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 license-file = { workspace = true }
 description = "Common functionality for the Temporal SDK Core, Client, and Rust SDK"
 homepage = "https://temporal.io/"
-repository = "https://github.com/temporalio/sdk-core"
+repository = "https://github.com/temporalio/sdk-rust"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 exclude = ["protos/*/.github/*"]
@@ -14,7 +14,6 @@ exclude = ["protos/*/.github/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-history_builders = ["rand"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 prometheus = [
   "dep:prometheus",
@@ -25,13 +24,8 @@ prometheus = [
 ]
 envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
-test-utilities = ["history_builders"]
-core-based-sdk = [
-  "prometheus",
-  "envconfig",
-  "dep:ringbuf",
-  "dep:futures-channel",
-]
+core-telemetry-bridge = ["dep:ringbuf", "dep:futures-channel"]
+core-based-sdk = ["core-telemetry-bridge", "prometheus", "envconfig"]
 
 [dependencies]
 anyhow = "1.0"
@@ -42,7 +36,7 @@ crc32fast = "1"
 dirs = { version = "6.0", optional = true }
 derive_more = { workspace = true }
 erased-serde = "0.4"
-futures = "0.3"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 futures-channel = { version = "0.3", default-features = false, features = [
   "std",
 ], optional = true }
@@ -55,31 +49,39 @@ hyper-util = { version = "0.1", features = [
   "tokio",
 ], optional = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.31", features = [
+opentelemetry_sdk = { version = "0.31", default-features = false, features = [
   "rt-tokio",
   "metrics",
   "spec_unstable_metrics_views",
 ], optional = true }
-opentelemetry-otlp = { version = "0.31", features = [
+opentelemetry-otlp = { version = "0.31", default-features = false, features = [
   "tokio",
   "metrics",
-  "tls",
+  "tls-roots",
   "http-proto",
   "grpc-tonic",
+  "reqwest-blocking-client",
+  "reqwest-rustls",
 ], optional = true }
-parking_lot = { version = "0.12", features = ["send_guard"] }
+parking_lot = { version = "0.12" }
 prometheus = { version = "0.14", optional = true, default-features = false }
 prost = { workspace = true }
 prost-wkt = "0.7"
 prost-types = { workspace = true }
-rand = { version = "0.10", optional = true }
 ringbuf = { version = "0.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.47", features = [], optional = true }
+tokio = { version = "1.47", default-features = false, features = [
+  "io-util",
+  "net",
+  "rt",
+], optional = true }
 toml = { version = "1.0", optional = true }
-tonic = { workspace = true }
+tonic = { workspace = true, default-features = false, features = [
+  "transport",
+  "codegen",
+] }
 tonic-prost = { workspace = true }
 tracing = "0.1"
 # TODO [rust-sdk-branch]: Is it reasonable to make this optional?
@@ -91,7 +93,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 tracing-core = "0.1"
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", default-features = false, features = ["v4"] }
 pbjson = { workspace = true }
 
 [build-dependencies]
@@ -105,5 +107,6 @@ workspace = true
 
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
+rstest = "0.26"
 tempfile = "3.21"
 tokio = { version = "1.47", features = ["macros", "rt"] }

@@ -44,8 +44,11 @@ use uuid::Uuid;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
+/// The result of a legacy query sent via `respond_legacy_query`.
 pub enum LegacyQueryResult {
+    /// The query handler returned a result successfully.
     Succeeded(QueryResult),
+    /// The query handler failed.
     Failed(workflow_completion::Failure),
 }
 
@@ -307,6 +310,8 @@ impl WorkerClient for WorkerClientBag {
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_instance_key: self.worker_instance_key.to_string(),
+            poller_group_id: Default::default(),
+            worker_control_task_queue: Default::default(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -345,6 +350,8 @@ impl WorkerClient for WorkerClientBag {
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_instance_key: self.worker_instance_key.to_string(),
+            poller_group_id: Default::default(),
+            worker_control_task_queue: Default::default(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -381,6 +388,7 @@ impl WorkerClient for WorkerClientBag {
             deployment_options: self.deployment_options(),
             worker_heartbeat: Vec::new(),
             worker_instance_key: self.worker_instance_key.to_string(),
+            poller_group_id: Default::default(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -442,6 +450,8 @@ impl WorkerClient for WorkerClientBag {
             versioning_behavior: request.versioning_behavior.into(),
             deployment_options: self.deployment_options(),
             resource_id: Default::default(),
+            worker_instance_key: self.worker_instance_key.to_string(),
+            worker_control_task_queue: Default::default(),
         };
         Ok(self
             .connection
@@ -492,6 +502,7 @@ impl WorkerClient for WorkerClientBag {
                     identity: self.identity(),
                     task_token: task_token.0,
                     response: Some(response),
+                    poller_group_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -627,6 +638,7 @@ impl WorkerClient for WorkerClientBag {
                     task_token: task_token.0,
                     failure,
                     error,
+                    poller_group_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -688,6 +700,7 @@ impl WorkerClient for WorkerClientBag {
                     namespace: self.namespace.clone(),
                     failure,
                     cause: cause.into(),
+                    poller_group_id: Default::default(),
                 }
                 .into_request(),
             )

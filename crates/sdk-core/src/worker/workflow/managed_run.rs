@@ -296,16 +296,17 @@ impl ManagedRun {
         debug!("Marking WFT completed");
         let retme = self.wft.take();
 
-        // Only record latency metrics if we genuinely reported to server
+        if let Some(ot) = &retme
+            && let Some(ct) = report_status.completion_time()
+        {
+            self.metrics.wf_task_latency(ct.sub(ot.start_time));
+        }
+
         if let WFTReportStatus::Reported {
             reset_last_started_to,
-            completion_time,
+            ..
         } = report_status
         {
-            if let Some(ot) = &retme {
-                self.metrics
-                    .wf_task_latency(completion_time.sub(ot.start_time));
-            }
             if let Some(id) = reset_last_started_to {
                 self.wfm.machines.reset_last_started_id(id);
             }

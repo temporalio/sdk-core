@@ -1,25 +1,15 @@
 //! Test utilities for creating workflow commands and histories
 //! Only available when the test-utilities feature is enabled
 
-use crate::protos::{
-    DEFAULT_ACTIVITY_TYPE,
+use crate::replay::DEFAULT_ACTIVITY_TYPE;
+use std::time::Duration;
+use temporalio_common::protos::{
     coresdk::workflow_commands::{
         ActivityCancellationType, QueryResult, QuerySuccess, ScheduleActivity,
         ScheduleLocalActivity, StartTimer, workflow_command,
     },
     temporal::api::common::v1::Payload,
 };
-use std::time::Duration;
-
-/// Convenience macro for creating prost Duration from std::time::Duration
-#[macro_export]
-macro_rules! prost_dur {
-    ($dur_call:ident $args:tt) => {
-        std::time::Duration::$dur_call$args
-            .try_into()
-            .expect("test duration fits")
-    };
-}
 
 /// Create a start timer command for use in tests
 pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Variant {

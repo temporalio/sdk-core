@@ -256,6 +256,14 @@ pub fn load_client_config(
     options: LoadClientConfigOptions,
     env_vars: Option<&HashMap<String, String>>,
 ) -> Result<ClientConfig, ConfigError> {
+    load_client_config_inner(options, env_vars, get_default_config_file_path())
+}
+
+fn load_client_config_inner(
+    options: LoadClientConfigOptions,
+    env_vars: Option<&HashMap<String, String>>,
+    default_config_file_path: Option<String>,
+) -> Result<ClientConfig, ConfigError> {
     let env_provider = match env_vars {
         Some(map) => EnvProvider::Map(map),
         None => EnvProvider::System,
@@ -270,11 +278,14 @@ pub fn load_client_config(
                 .get("TEMPORAL_CONFIG_FILE")?
                 .filter(|p| !p.is_empty())
             {
-                path
+                Some(path)
             } else {
-                get_default_config_file_path()?
+                default_config_file_path
             };
-            read_path_bytes(&file_path)?
+            match file_path {
+                Some(file_path) => read_path_bytes(&file_path)?,
+                None => None,
+            }
         }
     };
 
@@ -594,13 +605,14 @@ fn normalize_grpc_meta_key(key: &str) -> String {
 }
 
 /// Get the default configuration file path
-fn get_default_config_file_path() -> Result<String, ConfigError> {
-    // Try to get user config directory
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| ConfigError::InvalidConfig("failed getting user config dir".to_string()))?;
-
-    let path = config_dir.join("temporalio").join(DEFAULT_CONFIG_FILE);
-    Ok(path.to_string_lossy().to_string())
+fn get_default_config_file_path() -> Option<String> {
+    dirs::config_dir().map(|config_dir| {
+        config_dir
+            .join("temporalio")
+            .join(DEFAULT_CONFIG_FILE)
+            .to_string_lossy()
+            .to_string()
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1749,5 +1761,16 @@ address = "some-address"
                 .disabled,
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_load_default_config_path_not_exist() {
+        let config = load_client_config_inner(
+            LoadClientConfigOptions::default(),
+            Some(&HashMap::new()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(config, ClientConfig::default());
     }
 }

@@ -413,22 +413,7 @@ impl Workflows {
                         Err(e)
                             if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) && attempt < 2 =>
                         {
-                            let failure = Failure {
-                                failure: Some(
-                                    temporalio_common::protos::temporal::api::failure::v1::Failure {
-                                        message: "GRPC Message too large".to_string(),
-                                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                                            ApplicationFailureInfo {
-                                                r#type: "GrpcMessageTooLarge".to_string(),
-                                                non_retryable: true,
-                                                ..Default::default()
-                                            },
-                                        )),
-                                        ..Default::default()
-                                    },
-                                ),
-                                force_cause: 0,
-                            };
+                            let failure = make_grpc_message_too_large_failure();
                             let new_outcome = FailedActivationWFTReport::Report(
                                 task_token,
                                 WorkflowTaskFailedCause::GrpcMessageTooLarge,
@@ -525,7 +510,9 @@ impl Workflows {
                 self.handle_activation_failed(run_id, completion_time, outcome)
                     .await
             }
-            ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
+            ActivationCompleteOutcome::WFTFailedDontReport => {
+                WFTReportStatus::DropWft { completion_time }
+            }
             ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         }
     }
@@ -844,10 +831,24 @@ impl Workflows {
 
     /// Wraps responding to legacy queries. Handles ignore-able failures.
     async fn respond_legacy_query(&self, tt: TaskToken, res: LegacyQueryResult) {
-        match self.client.respond_legacy_query(tt, res).await {
+        match self.client.respond_legacy_query(tt.clone(), res).await {
             Ok(_) => {}
             Err(e) if e.code() == tonic::Code::NotFound => {
                 warn!(error=?e, "Query not found when attempting to respond to it");
+            }
+            Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
+                warn!(error=%e, "Query response too large, responding with failure");
+                let failure = make_grpc_message_too_large_failure();
+                if let Err(e2) = self
+                    .client
+                    .respond_legacy_query(tt, LegacyQueryResult::Failed(failure))
+                    .await
+                {
+                    warn!(
+                        error=%e2,
+                        "Failed to send query failure response after message-too-large"
+                    );
+                }
             }
             Err(e) => {
                 warn!(error= %e, "Network error while responding to legacy query");
@@ -1184,8 +1185,21 @@ enum WFTReportStatus {
     /// work to be done. EX: Running LAs.
     NotReported,
     /// We didn't report, but we want to clear the outstanding workflow task anyway. See
-    /// [ActivationCompleteOutcome::WFTFailedDontReport]
-    DropWft,
+    /// [ActivationCompleteOutcome::WFTFailedDontReport].
+    DropWft { completion_time: Instant },
+}
+impl WFTReportStatus {
+    fn completion_time(&self) -> Option<Instant> {
+        match self {
+            WFTReportStatus::Reported {
+                completion_time, ..
+            }
+            | WFTReportStatus::DropWft {
+                completion_time, ..
+            } => Some(*completion_time),
+            WFTReportStatus::NotReported => None,
+        }
+    }
 }
 #[derive(Debug, Default)]
 struct BufferedTasks {
@@ -1709,6 +1723,25 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
     });
+}
+
+fn make_grpc_message_too_large_failure() -> Failure {
+    Failure {
+        failure: Some(
+            temporalio_common::protos::temporal::api::failure::v1::Failure {
+                message: "GRPC Message too large".to_string(),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        r#type: "GrpcMessageTooLarge".to_string(),
+                        non_retryable: true,
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+        ),
+        force_cause: WorkflowTaskFailedCause::GrpcMessageTooLarge as i32,
+    }
 }
 
 #[cfg(test)]

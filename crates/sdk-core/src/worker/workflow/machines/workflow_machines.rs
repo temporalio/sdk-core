@@ -1205,6 +1205,7 @@ impl WorkflowMachines {
                     ProtoCmdAttrs::RequestCancelExternalWorkflowExecutionCommandAttributes(
                         attrs,
                     ) => {
+                        #[allow(deprecated)]
                         let we = NamespacedWorkflowExecution {
                             namespace: attrs.namespace,
                             workflow_id: attrs.workflow_id,
@@ -1433,7 +1434,9 @@ impl WorkflowMachines {
                             self.replaying,
                             attrs.deprecated,
                             encountered_entry.is_some(),
-                            self.encountered_patch_markers.keys().map(|s| s.as_str()),
+                            self.encountered_patch_markers
+                                .iter()
+                                .filter_map(|(k, ci)| ci.created_command.then_some(k.as_str())),
                             self.observed_internal_flags.clone(),
                         )?;
                         let mkey = self.add_cmd_to_wf_task(

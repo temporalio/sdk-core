@@ -45,6 +45,11 @@ pub struct ConnectionOptions {
     pub grpc_override_callback: ClientGrpcOverrideCallback,
     /// Optional user data passed to each callback call.
     pub grpc_override_callback_user_data: *mut libc::c_void,
+    /// If non-null, DNS-based load balancing is enabled. When the target URL resolves to multiple
+    /// addresses, requests are distributed across them and the address list is periodically
+    /// refreshed. If null, DNS load balancing is disabled. Ignored (forced off) when
+    /// http_connect_proxy_options is also set.
+    pub dns_load_balancing_options: *const ClientDnsLoadBalancingOptions,
 }
 
 #[repr(C)]
@@ -76,6 +81,12 @@ pub struct ClientHttpConnectProxyOptions {
     pub target_host: ByteArrayRef,
     pub username: ByteArrayRef,
     pub password: ByteArrayRef,
+}
+
+#[repr(C)]
+pub struct ClientDnsLoadBalancingOptions {
+    /// How often, in milliseconds, to re-resolve DNS.
+    pub resolution_interval_millis: u64,
 }
 
 type CoreConnection = temporalio_client::Connection;
@@ -130,6 +141,7 @@ pub extern "C" fn temporal_core_client_connect(
             cb,
             options.grpc_override_callback_user_data,
         ));
+        connection_options.dns_load_balancing = None;
     }
     // Spawn async call
     let user_data = UserDataHandle(user_data);
@@ -572,17 +584,44 @@ async fn call_workflow_service(
         "CountActivityExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_activity_executions)
         }
+        "CountNexusOperationExecutions" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                count_nexus_operation_executions
+            )
+        }
         "CountSchedules" => rpc_call_on_trait!(client, call, WorkflowService, count_schedules),
         "CountWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
         }
         "CreateSchedule" => rpc_call_on_trait!(client, call, WorkflowService, create_schedule),
+        "CreateWorkerDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, create_worker_deployment)
+        }
+        "CreateWorkerDeploymentVersion" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                create_worker_deployment_version
+            )
+        }
         "CreateWorkflowRule" => {
             rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
         }
         "DeleteSchedule" => rpc_call_on_trait!(client, call, WorkflowService, delete_schedule),
         "DeleteActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
+        }
+        "DeleteNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                delete_nexus_operation_execution
+            )
         }
         "DeleteWorkerDeployment" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_worker_deployment)
@@ -615,6 +654,14 @@ async fn call_workflow_service(
         }
         "DescribeNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_namespace)
+        }
+        "DescribeNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                describe_nexus_operation_execution
+            )
         }
         "DescribeSchedule" => rpc_call_on_trait!(client, call, WorkflowService, describe_schedule),
         "DescribeTaskQueue" => {
@@ -707,6 +754,14 @@ async fn call_workflow_service(
         ),
         "ListDeployments" => rpc_call_on_trait!(client, call, WorkflowService, list_deployments),
         "ListNamespaces" => rpc_call_on_trait!(client, call, WorkflowService, list_namespaces),
+        "ListNexusOperationExecutions" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                list_nexus_operation_executions
+            )
+        }
         "ListOpenWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, list_open_workflow_executions)
         }
@@ -737,6 +792,14 @@ async fn call_workflow_service(
         }
         "PollActivityTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_activity_task_queue)
+        }
+        "PollNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                poll_nexus_operation_execution
+            )
         }
         "PollNexusTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_nexus_task_queue)
@@ -777,6 +840,14 @@ async fn call_workflow_service(
                 call,
                 WorkflowService,
                 request_cancel_activity_execution
+            )
+        }
+        "RequestCancelNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_nexus_operation_execution
             )
         }
         "RequestCancelWorkflowExecution" => {
@@ -894,6 +965,14 @@ async fn call_workflow_service(
         "StartBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
         }
+        "StartNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                start_nexus_operation_execution
+            )
+        }
         "StartWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
         }
@@ -902,6 +981,14 @@ async fn call_workflow_service(
         }
         "TerminateActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_activity_execution)
+        }
+        "TerminateNexusOperationExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                terminate_nexus_operation_execution
+            )
         }
         "TerminateWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_workflow_execution)
@@ -925,6 +1012,14 @@ async fn call_workflow_service(
         }
         "UpdateWorkerConfig" => {
             rpc_call_on_trait!(client, call, WorkflowService, update_worker_config)
+        }
+        "UpdateWorkerDeploymentVersionComputeConfig" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                update_worker_deployment_version_compute_config
+            )
         }
         "UpdateWorkerDeploymentVersionMetadata" => {
             rpc_call_on_trait!(
@@ -957,6 +1052,14 @@ async fn call_workflow_service(
                 call,
                 WorkflowService,
                 update_worker_build_id_compatibility
+            )
+        }
+        "ValidateWorkerDeploymentVersionComputeConfig" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                validate_worker_deployment_version_compute_config
             )
         }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
@@ -1158,6 +1261,17 @@ async fn call_cloud_service(
             rpc_call_on_trait!(client, call, CloudService, create_billing_report)
         }
         "GetBillingReport" => rpc_call_on_trait!(client, call, CloudService, get_billing_report),
+        "GetCustomRoles" => rpc_call_on_trait!(client, call, CloudService, get_custom_roles),
+        "GetCustomRole" => rpc_call_on_trait!(client, call, CloudService, get_custom_role),
+        "CreateCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, create_custom_role)
+        }
+        "UpdateCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, update_custom_role)
+        }
+        "DeleteCustomRole" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_custom_role)
+        }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
@@ -1259,6 +1373,20 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
         let http_connect_proxy =
             unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
 
+        let dns_load_balancing =
+            unsafe { opts.dns_load_balancing_options.as_ref() }.map(Into::into);
+        let dns_load_balancing: Option<temporalio_client::DnsLoadBalancingOptions> =
+            if http_connect_proxy.is_some() {
+                if dns_load_balancing.is_some() {
+                    tracing::warn!(
+                        "Disabling DNS load balancing because http_connect_proxy_options is set"
+                    );
+                }
+                None
+            } else {
+                dns_load_balancing
+            };
+
         Ok(
             temporalio_client::ConnectionOptions::new(Url::parse(opts.target_url.to_str())?)
                 .client_name(opts.client_name.to_string())
@@ -1273,6 +1401,7 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
                 .maybe_binary_headers(binary_headers)
                 .maybe_api_key(api_key)
                 .maybe_http_connect_proxy(http_connect_proxy)
+                .dns_load_balancing(dns_load_balancing)
                 .maybe_tls_options(tls_cfg)
                 .build(),
         )
@@ -1333,6 +1462,14 @@ impl From<&ClientKeepAliveOptions> for temporalio_client::ClientKeepAliveOptions
     }
 }
 
+impl From<&ClientDnsLoadBalancingOptions> for temporalio_client::DnsLoadBalancingOptions {
+    fn from(opts: &ClientDnsLoadBalancingOptions) -> Self {
+        let mut out = temporalio_client::DnsLoadBalancingOptions::default();
+        out.resolution_interval = Duration::from_millis(opts.resolution_interval_millis);
+        out
+    }
+}
+
 impl From<&ClientHttpConnectProxyOptions> for temporalio_client::proxy::HttpConnectProxyOptions {
     fn from(opts: &ClientHttpConnectProxyOptions) -> Self {
         temporalio_client::proxy::HttpConnectProxyOptions {
@@ -1352,5 +1489,73 @@ impl From<&GrpcMetadataHolder> for MetadataRef {
             data: value.data.as_ptr(),
             size: value.data.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ByteArrayRefArray;
+
+    fn base_connection_options() -> ConnectionOptions {
+        ConnectionOptions {
+            target_url: "http://localhost:7233".into(),
+            client_name: ByteArrayRef::empty(),
+            client_version: ByteArrayRef::empty(),
+            metadata: ByteArrayRefArray::empty(),
+            binary_metadata: ByteArrayRefArray::empty(),
+            api_key: ByteArrayRef::empty(),
+            identity: ByteArrayRef::empty(),
+            tls_options: std::ptr::null(),
+            retry_options: std::ptr::null(),
+            keep_alive_options: std::ptr::null(),
+            http_connect_proxy_options: std::ptr::null(),
+            grpc_override_callback: None,
+            grpc_override_callback_user_data: std::ptr::null_mut(),
+            dns_load_balancing_options: std::ptr::null(),
+        }
+    }
+
+    #[test]
+    fn dns_load_balancing_null_pointer_disables() {
+        let opts = base_connection_options();
+        let converted: temporalio_client::ConnectionOptions = (&opts).try_into().unwrap();
+        assert!(converted.dns_load_balancing.is_none());
+    }
+
+    #[test]
+    fn dns_load_balancing_non_zero_interval_passes_through() {
+        let dns = ClientDnsLoadBalancingOptions {
+            resolution_interval_millis: 5_000,
+        };
+        let opts = ConnectionOptions {
+            dns_load_balancing_options: &dns,
+            ..base_connection_options()
+        };
+        let converted: temporalio_client::ConnectionOptions = (&opts).try_into().unwrap();
+        let dns_opts = converted
+            .dns_load_balancing
+            .expect("DNS load balancing should be enabled");
+        assert_eq!(dns_opts.resolution_interval, Duration::from_millis(5_000));
+    }
+
+    #[test]
+    fn dns_load_balancing_silently_disabled_when_http_proxy_set() {
+        let dns = ClientDnsLoadBalancingOptions {
+            resolution_interval_millis: 5_000,
+        };
+        let proxy = ClientHttpConnectProxyOptions {
+            target_host: "proxy.example.com:8080".into(),
+            username: ByteArrayRef::empty(),
+            password: ByteArrayRef::empty(),
+        };
+        let opts = ConnectionOptions {
+            dns_load_balancing_options: &dns,
+            http_connect_proxy_options: &proxy,
+            ..base_connection_options()
+        };
+        let converted: temporalio_client::ConnectionOptions = (&opts).try_into().unwrap();
+        assert!(converted.dns_load_balancing.is_none());
+        assert!(converted.http_connect_proxy.is_some());
     }
 }

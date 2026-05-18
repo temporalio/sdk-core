@@ -152,8 +152,7 @@ impl ResetRandomseedWf {
                 "hi!".to_string(),
                 LocalActivityOptions::default(),
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .await?;
         }
         ctx.wait_condition(|s| s.post_fail_received).await;
         ctx.state(|wf| wf.notify.notify_one());

@@ -1,8 +1,9 @@
 use crate::common::activity_functions::StdActivities;
 use std::time::Duration;
-use temporalio_common::{prost_dur, protos::temporal::api::common::v1::RetryPolicy};
+use temporalio_common::protos::temporal::api::common::v1::RetryPolicy;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
+use temporalio_sdk_core::prost_dur;
 
 #[workflow]
 #[derive(Default)]
@@ -32,10 +33,7 @@ impl LaProblemWorkflow {
         ctx.start_activity(
             StdActivities::delay,
             Duration::from_secs(15),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(20)),
-                ..Default::default()
-            },
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(20)),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

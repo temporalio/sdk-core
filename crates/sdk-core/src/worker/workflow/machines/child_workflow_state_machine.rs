@@ -399,7 +399,9 @@ impl Started {
                 cause: Some(Box::new(Failure {
                     message: "Terminated".to_owned(),
                     failure_info: Some(FailureInfo::TerminatedFailureInfo(
-                        failure::TerminatedFailureInfo {},
+                        failure::TerminatedFailureInfo {
+                            identity: Default::default(),
+                        },
                     )),
                     ..Default::default()
                 })),
@@ -729,6 +731,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             ChildWorkflowCommand::IssueCancelAfterStarted { reason } => {
                 let mut resps = vec![];
                 if self.shared_state.cancel_type != ChildWorkflowCancellationType::Abandon {
+                    #[allow(deprecated)]
                     resps.push(MachineResponse::NewCoreOriginatedCommand(
                         RequestCancelExternalWorkflowExecutionCommandAttributes {
                             namespace: self.shared_state.namespace.clone(),

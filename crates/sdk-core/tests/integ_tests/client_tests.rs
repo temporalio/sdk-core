@@ -5,8 +5,12 @@ use crate::common::{
     http_proxy::HttpProxy,
 };
 use assert_matches::assert_matches;
-use futures_util::FutureExt;
-use http_body_util::Full;
+use futures_util::{FutureExt, stream};
+use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
+use hyper::{
+    body::{Bytes, Frame},
+    http::{HeaderMap, HeaderValue},
+};
 use prost::Message;
 use std::{
     collections::HashMap,
@@ -255,7 +259,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, mut header_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("[::]:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let server_handle = tokio::spawn(async move {
@@ -375,7 +379,7 @@ async fn http_proxy() {
     opts.set_skip_get_system_info(true);
 
     // Connect client with no proxy and make call and confirm reached
-    opts.target = format!("http://127.0.0.1:{}", server.addr.port())
+    opts.target = format!("http://[::1]:{}", server.addr.port())
         .parse()
         .unwrap();
     let connection = Connection::connect(opts.clone()).await.unwrap();
@@ -394,6 +398,7 @@ async fn http_proxy() {
         target_addr: tcp_proxy_addr.to_string(),
         basic_auth: None,
     });
+    opts.dns_load_balancing = None;
     let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
     let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
@@ -422,6 +427,7 @@ async fn http_proxy() {
             target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
             basic_auth: None,
         });
+        opts.dns_load_balancing = None;
         let connection = Connection::connect(opts.clone()).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
         let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
@@ -536,14 +542,18 @@ where
         .encode(&mut buf)
         .expect("failed to encode response message");
 
-    // Props to o3-mini for giving me a cheap way to make a grpc response
     let mut frame = Vec::with_capacity(5 + buf.len());
     frame.push(0);
     let len = buf.len() as u32;
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(&buf);
-    let full_body = Full::new(frame.into());
-    let body = Body::new(full_body);
+    let mut trailers = HeaderMap::new();
+    trailers.insert("grpc-status", HeaderValue::from_static("0"));
+    let stream = stream::iter(vec![
+        Ok::<_, Status>(Frame::data(Bytes::from(frame))),
+        Ok::<_, Status>(Frame::trailers(trailers)),
+    ]);
+    let body = Body::new(BoxBody::new(StreamBody::new(stream)).boxed());
 
     // Build the HTTP response with the required gRPC headers.
     Response::builder()

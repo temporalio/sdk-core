@@ -61,6 +61,9 @@ message NexusTask {
     // Only set when variant is `task` and the header was present with a valid value.
     // Represented as an absolute timestamp.
     google.protobuf.Timestamp request_deadline = 3;
+    // The endpoint this request was addressed to. Extracted from the request for convenient access.
+    // Only set when variant is `task`.
+    string endpoint = 4;
 }
 
 message CancelNexusTask {

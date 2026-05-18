@@ -1,4 +1,4 @@
-# Contributor Guidance for `sdk-core`
+# Contributor Guidance for `sdk-rust`
 
 This repository provides a Rust workspace for the Temporal Core SDK and related crates. Use this
 document as your quick reference when submitting pull requests.

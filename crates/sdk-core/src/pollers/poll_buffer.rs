@@ -2,15 +2,14 @@ use crate::{
     abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::{
-        ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WFTPollerShared,
-        WorkflowSlotKind,
+        ActivitySlotKind, NamespaceCapabilities, NexusSlotKind, PollerBehavior, SlotKind,
+        WFTPollerShared, WorkflowSlotKind,
         client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
     },
 };
 use backoff::{SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
-use governor::{Quota, RateLimiter};
 use std::{
     cmp,
     fmt::Debug,
@@ -19,7 +18,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporalio_client::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, request_extensions::NoRetryOnMatching,
@@ -45,6 +44,32 @@ use tracing::Instrument;
 
 type PollReceiver<T, SK> =
     Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>;
+
+struct PollRateLimiter {
+    interval: Duration,
+    next_allowed_at: Mutex<Instant>,
+}
+
+impl PollRateLimiter {
+    fn new(polls_per_second: f64) -> Self {
+        Self {
+            interval: Duration::from_secs_f64(polls_per_second.recip()),
+            next_allowed_at: Mutex::new(Instant::now()),
+        }
+    }
+
+    async fn wait(&self) {
+        let scheduled_at = {
+            let mut next_allowed_at = self.next_allowed_at.lock().await;
+            let now = Instant::now();
+            let scheduled_at = (*next_allowed_at).max(now);
+            *next_allowed_at = scheduled_at + self.interval;
+            scheduled_at
+        };
+        tokio::time::sleep_until(scheduled_at.into()).await;
+    }
+}
+
 pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
     buffered_polls: PollReceiver<T, SK>,
     shutdown: CancellationToken,
@@ -77,8 +102,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: WorkflowTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        graceful_poll_shutdown: Arc<AtomicBool>,
-        server_supports_autoscaling: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
         let poll_scaler = PollScaler::new(
@@ -86,7 +110,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
-            server_supports_autoscaling,
+            capabilities.clone(),
         );
         if let Some(wftps) = options.wft_poller_shared.as_ref() {
             if is_sticky {
@@ -142,7 +166,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             poll_scaler,
             pre_permit_delay,
             post_poll_fn,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -158,19 +182,15 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: ActivityTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        graceful_poll_shutdown: Arc<AtomicBool>,
-        server_supports_autoscaling: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
-            .and_then(|ps| {
-                Quota::with_period(Duration::from_secs_f64(ps.recip()))
-                    .map(|q| Arc::new(RateLimiter::direct(q)))
-            })
+            .map(|ps| Arc::new(PollRateLimiter::new(ps)))
             .map(|rl| {
                 move || {
                     let rl = rl.clone();
-                    async move { rl.until_ready().await }.boxed()
+                    async move { rl.wait().await }.boxed()
                 }
             });
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
@@ -204,7 +224,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
-            server_supports_autoscaling,
+            capabilities.clone(),
         );
         Self::new(
             poll_fn,
@@ -213,7 +233,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             poll_scaler,
             pre_permit_delay,
             None::<fn(&PollActivityTaskQueueResponse)>,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -229,8 +249,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         send_heartbeat: bool,
-        graceful_poll_shutdown: Arc<AtomicBool>,
-        server_supports_autoscaling: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -264,11 +283,11 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                 num_pollers_handler,
                 shutdown,
                 last_successful_poll_time,
-                server_supports_autoscaling,
+                capabilities.clone(),
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
-            graceful_poll_shutdown,
+            capabilities,
         )
     }
 }
@@ -294,7 +313,7 @@ where
         mut poll_scaler: PollScaler<F>,
         pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
         post_poll_fn: Option<impl Fn(&T) + Send + Sync + 'static>,
-        graceful_shutdown: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
@@ -365,11 +384,9 @@ where
                         } else {
                             None
                         };
-                    let graceful_shutdown = graceful_shutdown.clone();
+                    let capabilities = capabilities.clone();
                     let poll_task = tokio::spawn(async move {
-                        let shutdown_clone = shutdown.clone();
-
-                        let r = if graceful_shutdown.load(Ordering::Relaxed) {
+                        let r = if capabilities.graceful_poll_shutdown() {
                             pf(timeout_override).await
                         } else {
                             let poll_interruptor = shutdown.cancelled().then(|_| async move {
@@ -389,10 +406,11 @@ where
                         }
                         let (should_forward, backoff_duration) = report_handle.poll_result(&r);
                         if let Some(duration) = backoff_duration {
-                            // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
+                            // Apply backoff BEFORE dropping active_guard to prevent next poll from
+                            // starting
                             tokio::select! {
                                 _ = tokio::time::sleep(duration) => return,
-                                _ = shutdown_clone.cancelled() => (),
+                                _ = shutdown.cancelled() => (),
                             };
                         }
                         drop(active_guard);
@@ -489,7 +507,7 @@ where
         num_pollers_handler: Option<F>,
         shutdown: CancellationToken,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        server_supports_autoscaling: Arc<AtomicBool>,
+        capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
         let num_pollers_handler = num_pollers_handler.map(Arc::new);
@@ -506,7 +524,7 @@ where
             min,
             target: AtomicUsize::new(target),
             ever_saw_scaling_decision: AtomicBool::default(),
-            server_supports_autoscaling,
+            capabilities,
             behavior,
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
@@ -591,7 +609,7 @@ struct PollScalerReportHandle {
     min: usize,
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
-    server_supports_autoscaling: Arc<AtomicBool>,
+    capabilities: Arc<NamespaceCapabilities>,
     behavior: PollerBehavior,
 
     ingested_this_period: AtomicUsize,
@@ -700,7 +718,7 @@ impl PollScalerReportHandle {
     /// autoscaling, it's safe to scale down without having seen a decision.
     fn can_scale_down(&self) -> bool {
         self.ever_saw_scaling_decision.load(Ordering::Relaxed)
-            || self.server_supports_autoscaling.load(Ordering::Relaxed)
+            || self.capabilities.poller_autoscaling()
     }
 }
 
@@ -866,8 +884,10 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
@@ -924,8 +944,10 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
 
         // Should not see error, unwraps should get empty response
@@ -1002,8 +1024,10 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
 
         let first_task = pb.poll().await.expect("Should get first task");
@@ -1109,8 +1133,10 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         ));
 
         // Trigger the first poll to initialize and get the scaling decision
@@ -1191,8 +1217,10 @@ mod tests {
                 wft_poller_shared: None,
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(graceful)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(graceful),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
 
         let first = pb.poll().await.unwrap().unwrap();
@@ -1244,7 +1272,10 @@ mod tests {
             min: minimum,
             target: AtomicUsize::new(10),
             ever_saw_scaling_decision: AtomicBool::new(false),
-            server_supports_autoscaling: Arc::new(AtomicBool::new(supports_autoscaling)),
+            capabilities: Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(supports_autoscaling),
+            }),
             behavior: PollerBehavior::Autoscaling {
                 minimum,
                 maximum: 10,

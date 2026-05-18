@@ -1,4 +1,6 @@
-use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
+use crate::common::{
+    ActivationAssertionsInterceptor, CoreWfStarter, WorkflowHandleExt, build_fake_sdk,
+};
 use std::{
     collections::{HashSet, VecDeque, hash_map::RandomState},
     sync::{
@@ -11,7 +13,7 @@ use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
-        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
+        VERSION_SEARCH_ATTR_KEY,
         constants::PATCH_MARKER_NAME,
         coresdk::{
             AsJsonPayloadExt, FromJsonPayloadExt,
@@ -28,6 +30,7 @@ use temporalio_common::{
             history::v1::{
                 ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
                 ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
+                history_event::Attributes as EventAttributes,
             },
         },
     },
@@ -39,7 +42,10 @@ use temporalio_sdk::{
     ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
+use temporalio_sdk_core::{
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
+    test_help::{CoreInternalFlags, MockPollCfg, ResponseType},
+};
 use tokio::{join, sync::Notify};
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
@@ -340,10 +346,7 @@ fn patch_marker_single_activity(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     match marker_type {
         MarkerType::Deprecated => {
             t.add_has_change_marker(MY_PATCH_ID, true);
@@ -410,10 +413,9 @@ async fn v1(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("no_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("no_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -424,10 +426,9 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions {
-                    activity_id: Some("had_change".to_owned()),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("had_change".to_owned())
+                    .build(),
             )
             .await;
         true
@@ -436,10 +437,9 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions {
-                    activity_id: Some("no_change".to_owned()),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("no_change".to_owned())
+                    .build(),
             )
             .await;
         false
@@ -452,10 +452,9 @@ async fn v3(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("had_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("had_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -465,10 +464,9 @@ async fn v4(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("had_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("had_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -682,7 +680,11 @@ impl SameChangeMultipleSpotsWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;
@@ -690,7 +692,11 @@ impl SameChangeMultipleSpotsWf {
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;
@@ -711,10 +717,7 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     if have_marker_in_hist {
         t.add_has_change_marker(MY_PATCH_ID, false);
         t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
@@ -821,10 +824,7 @@ async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(
-        &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
-        &[],
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::UpsertSearchAttributeOnPatch], &[]);
     for i in 1..=num_patches {
         let id = format!("patch-{i}");
         t.add_has_change_marker(&id, false);
@@ -873,4 +873,74 @@ async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow_with_factory(move || ManyPatchesWf { num_patches });
     worker.run().await.unwrap();
+}
+
+const MANY_PATCHES_IN_ONE_WFT_COUNT: usize = 200;
+
+#[workflow]
+#[derive(Default)]
+struct ManyPatchesInOneWftWf;
+
+#[workflow_methods]
+impl ManyPatchesInOneWftWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for i in 1..=MANY_PATCHES_IN_ONE_WFT_COUNT {
+            let _ = ctx.patched(&format!("patch-{i}"));
+        }
+        ctx.timer(Duration::from_millis(1)).await;
+        Ok(())
+    }
+}
+
+// The main difference with many_patches_combine_in_search_attrib_update are that
+// this one creates multiple patches in a single WFT, rather than spread them out
+// over multiple WFTs. See https://github.com/temporalio/sdk-core/issues/1223.
+#[tokio::test]
+async fn patch_marker_size_overflow_replay_is_deterministic() {
+    let wf_name = "patch_marker_size_overflow_replay_is_deterministic";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<ManyPatchesInOneWftWf>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ManyPatchesInOneWftWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // Confirm that the original execution did in fact hit the size limit: the last upsert SA
+    // event in history must contain fewer than the total number of patches issued by the workflow.
+    let history = handle.fetch_history(Default::default()).await.unwrap();
+    let last_upsert_patches = history
+        .events()
+        .iter()
+        .rev()
+        .find_map(|e| match &e.attributes {
+            Some(EventAttributes::UpsertWorkflowSearchAttributesEventAttributes(a)) => a
+                .search_attributes
+                .as_ref()
+                .and_then(|sa| sa.indexed_fields.get(VERSION_SEARCH_ATTR_KEY))
+                .map(|p| HashSet::<String, RandomState>::from_json_payload(p).unwrap()),
+            _ => None,
+        })
+        .expect("history should contain at least one UpsertWorkflowSearchAttributes event");
+    assert!(
+        last_upsert_patches.len() < MANY_PATCHES_IN_ONE_WFT_COUNT,
+        "expected the last upsert SA event to be missing patches due to size overflow, \
+         but it contained all {MANY_PATCHES_IN_ONE_WFT_COUNT} of them",
+    );
+
+    // Replay the workflow from the fetched history. This must succeed: the SDK must produce the
+    // same sequence of upsert SA commands during replay as it did during the original execution.
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }

@@ -66,6 +66,12 @@ pub struct ConnectionOptions {
     pub binary_headers: Option<HashMap<String, Vec<u8>>>,
     /// HTTP CONNECT proxy to use for this client.
     pub http_connect_proxy: Option<HttpConnectProxyOptions>,
+    /// If set, DNS-based load balancing is enabled. When the target is a hostname (not an IP
+    /// literal), DNS is resolved to all addresses and requests are distributed across them.
+    /// Incompatible with `service_override` and `http_connect_proxy`. Setting either in addition
+    /// to this field is an error. Set to `None` to disable.
+    #[builder(required, default = Some(DnsLoadBalancingOptions::default()))]
+    pub dns_load_balancing: Option<DnsLoadBalancingOptions>,
     /// If set true, error code labels will not be included on request failure metrics.
     #[builder(default)]
     pub disable_error_code_metric_tags: bool,
@@ -166,6 +172,22 @@ impl Default for ClientKeepAliveOptions {
     }
 }
 
+/// Options for DNS-based load balancing.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct DnsLoadBalancingOptions {
+    /// How often to re-resolve DNS. Defaults to 30 seconds.
+    pub resolution_interval: Duration,
+}
+
+impl Default for DnsLoadBalancingOptions {
+    fn default() -> Self {
+        Self {
+            resolution_interval: Duration::from_secs(30),
+        }
+    }
+}
+
 impl std::fmt::Debug for ClientTlsOptions {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -238,6 +260,12 @@ pub struct WorkflowStartOptions {
 
     /// Headers to include with the start request.
     pub header: Option<Header>,
+
+    /// Single-line static summary for the workflow, shown in the Temporal UI.
+    pub static_summary: Option<String>,
+
+    /// Multi-line static details for the workflow, shown in the Temporal UI.
+    pub static_details: Option<String>,
 }
 
 /// A signal to send atomically when starting a workflow.

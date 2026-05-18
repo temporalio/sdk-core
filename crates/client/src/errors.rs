@@ -24,6 +24,18 @@ pub enum ClientConnectError {
     /// server capabilities / verify server is responding.
     #[error("`get_system_info` call error after connection: {0:?}")]
     SystemInfoCallError(tonic::Status),
+    /// DNS resolution failed when attempting load-balanced connection.
+    #[error("DNS resolution error for '{host}': {source}")]
+    DnsResolutionError {
+        /// The host that failed to resolve.
+        host: String,
+        /// The underlying IO error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Invalid client configuration.
+    #[error("Invalid client configuration: {0}")]
+    InvalidConfig(String),
 }
 
 /// Errors thrown when a gRPC metadata header is invalid.

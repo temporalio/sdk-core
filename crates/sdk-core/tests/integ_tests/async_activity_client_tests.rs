@@ -110,15 +110,13 @@ async fn async_activity_completions(
             let activity_future = ctx.start_activity(
                 AsyncActivities::complete_async_activity,
                 expected_outcome,
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(30)),
-                    retry_policy: Some(RetryPolicy {
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(30))
+                    .retry_policy(RetryPolicy {
                         maximum_attempts: 1,
                         ..Default::default()
-                    }),
-                    cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
-                    ..Default::default()
-                },
+                    })
+                    .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
+                    .build(),
             );
 
             // For cancellation, wait a bit to let the activity start, then request cancel
@@ -137,8 +135,8 @@ async fn async_activity_completions(
                     let err = activity_result.expect_err("expected failure");
                     if let ActivityExecutionError::Failed(failure) = err {
                         // The failure we sent is wrapped as the cause
-                        let cause = failure.cause.expect("cause should be present");
-                        assert_eq!(cause.message, "async failure reason");
+                        let cause = failure.cause().expect("cause should be present");
+                        assert_eq!(cause.failure().message, "async failure reason");
                     } else {
                         panic!("expected Failed, got {err:?}");
                     }

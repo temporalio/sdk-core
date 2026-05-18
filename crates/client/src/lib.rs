@@ -9,6 +9,10 @@ extern crate tracing;
 
 mod async_activity_handle;
 pub mod callback_based;
+mod dns;
+/// Configuration loading from environment variables and TOML files.
+#[cfg(feature = "envconfig")]
+pub mod envconfig;
 pub mod errors;
 pub mod grpc;
 mod metrics;
@@ -67,7 +71,10 @@ use std::{
 };
 use temporalio_common::{
     HasWorkflowDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{
+        DataConverter, GenericPayloadConverter, PayloadConverter, SerializationContext,
+        SerializationContextData,
+    },
     protos::{
         coresdk::IntoPayloadsExt,
         grpc::health::v1::health_client::HealthClient,
@@ -78,6 +85,7 @@ use temporalio_common::{
             enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
             errordetails::v1::WorkflowExecutionAlreadyStartedFailure,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
+            sdk::v1::UserMetadata,
             taskqueue::v1::TaskQueue,
             testservice::v1::test_service_client::TestServiceClient,
             workflow::v1 as workflow,
@@ -140,17 +148,42 @@ struct ConnectionInner {
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
     workers: Arc<ClientWorkerSet>,
+    _dns_task: Option<Arc<dns::DnsReresolutionHandle>>,
 }
 
 impl Connection {
     /// Connect to a Temporal service.
     pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientConnectError> {
-        let service = if let Some(service_override) = options.service_override {
-            GrpcMetricSvc {
-                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
-                metrics: options.metrics_meter.clone().map(MetricsContext::new),
-                disable_errcode_label: options.disable_error_code_metric_tags,
-            }
+        let dns_lb_opts = dns::validate_and_get_dns_lb(&options)?.cloned();
+        let (service, dns_task) = if let Some(service_override) = options.service_override {
+            (
+                GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
+                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: options.disable_error_code_metric_tags,
+                },
+                None,
+            )
+        } else if let Some(dns_opts) = &dns_lb_opts {
+            let (channel, sender) = dns::create_balanced_channel(&options).await?;
+            let handle = dns::spawn_dns_reresolution(
+                sender,
+                options.target.clone(),
+                options.tls_options.clone(),
+                options.keep_alive.clone(),
+                options.override_origin.clone(),
+                dns_opts.resolution_interval,
+            );
+            (
+                ServiceBuilder::new()
+                    .layer_fn(move |channel| GrpcMetricSvc {
+                        inner: ChannelOrGrpcOverride::Channel(channel),
+                        metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                        disable_errcode_label: options.disable_error_code_metric_tags,
+                    })
+                    .service(channel),
+                Some(handle),
+            )
         } else {
             let channel = Channel::from_shared(options.target.to_string())?;
             let channel = add_tls_to_channel(options.tls_options.as_ref(), channel).await?;
@@ -173,13 +206,16 @@ impl Connection {
             } else {
                 channel.connect().await?
             };
-            ServiceBuilder::new()
-                .layer_fn(move |channel| GrpcMetricSvc {
-                    inner: ChannelOrGrpcOverride::Channel(channel),
-                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
-                    disable_errcode_label: options.disable_error_code_metric_tags,
-                })
-                .service(channel)
+            (
+                ServiceBuilder::new()
+                    .layer_fn(move |channel| GrpcMetricSvc {
+                        inner: ChannelOrGrpcOverride::Channel(channel),
+                        metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                        disable_errcode_label: options.disable_error_code_metric_tags,
+                    })
+                    .service(channel),
+                None,
+            )
         };
 
         let headers = Arc::new(RwLock::new(ClientHeaders {
@@ -221,6 +257,7 @@ impl Connection {
                 client_version: options.client_version,
                 capabilities,
                 workers: Arc::new(ClientWorkerSet::new()),
+                _dns_task: dns_task,
             }),
         })
     }
@@ -1027,6 +1064,29 @@ where
         let workflow_id = options.workflow_id.clone();
         let task_queue_name = options.task_queue.clone();
 
+        let user_metadata = if options.static_summary.is_some() || options.static_details.is_some()
+        {
+            let payload_converter = PayloadConverter::default();
+            let context = SerializationContext {
+                data: &SerializationContextData::Workflow,
+                converter: &payload_converter,
+            };
+            Some(UserMetadata {
+                summary: options.static_summary.map(|s| {
+                    payload_converter
+                        .to_payload(&context, &s)
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
+                details: options.static_details.map(|s| {
+                    payload_converter
+                        .to_payload(&context, &s)
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
+            })
+        } else {
+            None
+        };
+
         let run_id = if let Some(start_signal) = options.start_signal {
             // Use signal-with-start when a start_signal is provided
             let res = WorkflowService::signal_with_start_workflow_execution(
@@ -1057,6 +1117,7 @@ where
                     search_attributes: options.search_attributes.map(|d| d.into()),
                     cron_schedule: options.cron_schedule.unwrap_or_default(),
                     header: options.header.or(start_signal.header),
+                    user_metadata,
                     ..Default::default()
                 }
                 .into_request(),
@@ -1097,6 +1158,7 @@ where
                         completion_callbacks: options.completion_callbacks,
                         priority: Some(options.priority.into()),
                         header: options.header,
+                        user_metadata,
                         ..Default::default()
                     }
                     .into_request(),

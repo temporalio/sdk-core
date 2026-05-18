@@ -498,7 +498,7 @@ async fn nexus_async(
                 Some(nexus_operation_result::Status::Failed(f)) => f
             );
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            assert_eq!(f.cause.unwrap().message, "Workflow execution error: broken");
+            assert_eq!(f.cause.unwrap().message, "broken");
         }
         Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
             let f = assert_matches!(
@@ -805,6 +805,9 @@ async fn nexus_cancellation_types(
         enable_remote_activities: false,
         enable_nexus: true,
     };
+    // This test uses a tokio watch channel directly from workflow code to
+    // coordinate with the test harness, which triggers nondeterminism detection.
+    starter.sdk_config.detect_nondeterministic_futures = false;
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
