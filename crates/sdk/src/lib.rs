@@ -130,6 +130,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryStreamExt, future::LocalBoxFuture};
+use parking_lot::Mutex;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -815,7 +816,7 @@ struct WorkflowFutureHandle<F: Future> {
 struct ActivityHalf {
     /// Maps activity type to the function for executing activities of that type
     activities: ActivityDefinitions,
-    task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
+    task_tokens_to_cancels: Arc<Mutex<HashMap<TaskToken, CancellationToken>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1513,7 +1514,9 @@ impl ActivityHalf {
                 );
                 let ct = CancellationToken::new();
                 let task_token = activity.task_token;
-                self.task_tokens_to_cancels
+                let task_tokens_to_cancels = self.task_tokens_to_cancels.clone();
+                task_tokens_to_cancels
+                    .lock()
                     .insert(task_token.clone().into(), ct.clone());
 
                 let (ctx, args) = ActivityContext::new(
@@ -1539,6 +1542,7 @@ impl ActivityHalf {
                     }
                     .instrument(span);
                     let result = act_fut.await;
+                    task_tokens_to_cancels.lock().remove(task_token.as_slice());
                     let result = match result {
                         Ok(output) => {
                             // Codec application happens at the SDK/Core boundary, so activity
@@ -1569,6 +1573,7 @@ impl ActivityHalf {
             Some(activity_task::Variant::Cancel(_)) => {
                 if let Some(ct) = self
                     .task_tokens_to_cancels
+                    .lock()
                     .get(activity.task_token.as_slice())
                 {
                     ct.cancel();
@@ -1631,11 +1636,82 @@ mod tests {
         },
         protos::coresdk::{
             activity_result::activity_execution_result,
+            activity_task::{Cancel, Start},
             workflow_commands::{CompleteWorkflowExecution, workflow_command},
             workflow_completion::workflow_activation_completion,
         },
     };
     use temporalio_macros::{activities, activity_definitions, workflow, workflow_methods};
+    use temporalio_sdk_core::{init_replay_worker, replay::ReplayWorkerInput};
+
+    #[tokio::test]
+    async fn activity_cancel_tokens_removed_after_completion() {
+        let options = WorkerOptions::new("task_q")
+            .register_workflow::<OtherWorkflow>()
+            .unwrap()
+            .build();
+        let core_options = options
+            .to_core_options("test_namespace".to_owned(), String::new())
+            .unwrap();
+        let core = init_replay_worker(ReplayWorkerInput::new(
+            core_options,
+            futures_util::stream::empty(),
+        ))
+        .unwrap();
+        let worker = Worker::new_from_core_options_prepared(
+            Arc::new(core),
+            ClientOptions::new("test_namespace").build(),
+            options,
+        )
+        .unwrap();
+        let mut act_half = ActivityHalf {
+            activities: WorkerOptions::new("task_q")
+                .register_activities(MyActivities {})
+                .build()
+                .activities(),
+            ..Default::default()
+        };
+        let task_token = b"task-token".to_vec();
+        let handle_task = |act_half: &mut ActivityHalf, variant| {
+            act_half
+                .activity_task_handler(
+                    worker.common.worker.clone(),
+                    worker.common.client_options.clone(),
+                    worker.common.task_queue.clone(),
+                    worker.common.data_converter.clone(),
+                    vec![],
+                    ActivityTask {
+                        task_token: task_token.clone(),
+                        variant: Some(variant),
+                    },
+                )
+                .unwrap();
+        };
+
+        handle_task(
+            &mut act_half,
+            activity_task::Variant::Start(Start {
+                activity_type: "MyActivities::my_activity".to_owned(),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(act_half.task_tokens_to_cancels.lock().len(), 1);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !act_half.task_tokens_to_cancels.lock().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("completed activity should release its cancellation token");
+        assert!(act_half.task_tokens_to_cancels.lock().is_empty());
+
+        // Cancels can still arrive for tasks that already finished and must be ignored
+        handle_task(
+            &mut act_half,
+            activity_task::Variant::Cancel(Cancel::default()),
+        );
+        assert!(act_half.task_tokens_to_cancels.lock().is_empty());
+    }
 
     #[derive(Default)]
     struct FailingEncodeCodec {
