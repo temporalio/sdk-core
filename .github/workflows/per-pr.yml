@@ -107,6 +107,9 @@ jobs:
             crates: sdk
             # Wasmtime raises the MSRV only for the experimental wasm-workflows feature.
             feature-args: --features experimental,otel,opentelemetry,examples,wasm-examples,dynamic-tls,testing
+          - group: rust-1.92-aws-s3driver
+            crates: aws-s3driver
+            feature-args: --all-features
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
