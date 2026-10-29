@@ -97,6 +97,7 @@ serde = "1.0"
 serde_json = { workspace = true }
 siphasher = "1.0"
 slotmap = "1.0"
+sync_wrapper = "1.0.2"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
 thiserror = { workspace = true }

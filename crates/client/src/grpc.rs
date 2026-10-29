@@ -8,6 +8,7 @@ use crate::{
     Client, Connection, LONG_POLL_TIMEOUT, PayloadErrorLimits, RequestExt, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
+    request_extensions::AttemptSemaphore,
     retry::make_future_retry,
     worker::{ClientWorkerSet, Slot},
 };
@@ -153,18 +154,30 @@ impl RawGrpcCaller for Connection {
             self.inner.memo_warn_size,
         )?;
 
-        let info = self
-            .inner
-            .retry_options
-            .get_call_info(call_name, Some(&req));
+        let info = self.inner.retry_options.get_call_info(call_name, &req);
         req.extensions_mut().insert(info.call_type);
         if info.call_type.is_long() {
             req.set_default_timeout(LONG_POLL_TIMEOUT);
         }
 
+        let maybe_sem = req.extensions().get::<AttemptSemaphore>();
+
         let fact = || {
             let req_clone = req_cloner(&req);
-            callfn(req_clone)
+            let call_fut = callfn(req_clone);
+            async {
+                if let Some(sem) = maybe_sem {
+                    let permit = sem
+                        .0
+                        .acquire()
+                        .await
+                        .expect("AttemptSemaphore must not be closed");
+                    // Leaking the permit. If there's a retry, the permit will be restored by
+                    // TonicErrorHandler.
+                    permit.forget();
+                }
+                call_fut.await
+            }
         };
 
         let res = make_future_retry(info, fact);
@@ -2015,14 +2028,25 @@ proxier! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptions, ConnectionOptions};
-    use std::collections::HashSet;
+    use crate::{
+        ClientOptions, ConnectionOptions,
+        callback_based::{CallbackBasedGrpcService, GrpcSuccessResponse},
+    };
+    use assert_matches::assert_matches;
+    use futures_util::task::noop_waker_ref;
+    use prost::Message;
+    use std::{
+        collections::HashSet,
+        sync::atomic::{AtomicBool, Ordering},
+        task::{Context, Poll},
+    };
     use temporalio_common::{
         protos::temporal::api::{
             operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
         },
         worker::WorkerTaskTypes,
     };
+    use tokio::sync::Semaphore;
     use tonic::IntoRequest;
     use url::Url;
     use uuid::Uuid;
@@ -2412,21 +2436,17 @@ mod tests {
     /// so that eager workflow start can reserve a slot and dispatch the WFT.
     #[tokio::test]
     async fn connection_eager_start_dispatches_wft() {
-        use crate::{
-            ConnectionOptions,
-            callback_based::{CallbackBasedGrpcService, GrpcSuccessResponse},
-            worker::{MockClientWorker, MockSlot},
-        };
-        use prost::Message;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+        use crate::worker::{MockClientWorker, MockSlot};
 
         let dispatched = Arc::new(AtomicBool::new(false));
         let dispatched_clone = dispatched.clone();
 
         // Create a callback-based service that returns an eager_workflow_task in the response
         let service_override = CallbackBasedGrpcService {
-            callback: Arc::new(|_req| {
+            callback: Arc::new(|req| {
+                assert_eq!(req.rpc, "StartWorkflowExecution");
+                let decoded = StartWorkflowExecutionRequest::decode(req.proto).unwrap();
+                assert!(decoded.request_eager_execution);
                 Box::pin(async {
                     let resp = StartWorkflowExecutionResponse {
                         run_id: "test-run-id".to_string(),
@@ -2516,5 +2536,53 @@ mod tests {
             dispatched.load(Ordering::SeqCst),
             "Eager workflow task should have been dispatched to the worker"
         );
+    }
+
+    #[tokio::test]
+    async fn call_blocks_on_attempt_semaphore() {
+        let can_proceed = Arc::new(AtomicBool::new(false));
+        let can_proceed_clone = can_proceed.clone();
+
+        // Create a callback-based service that returns an eager_workflow_task in the response
+        let service_override = CallbackBasedGrpcService {
+            callback: Arc::new(move |req| {
+                assert_eq!(req.rpc, "PollWorkflowTaskQueue");
+                PollWorkflowTaskQueueRequest::decode(req.proto).unwrap();
+                assert!(can_proceed_clone.load(Ordering::Acquire));
+                Box::pin(async {
+                    Ok(GrpcSuccessResponse {
+                        headers: Default::default(),
+                        proto: PollWorkflowTaskQueueResponse::default().encode_to_vec(),
+                    })
+                })
+            }),
+        };
+
+        let opts = ConnectionOptions::new(Url::parse("http://localhost:7233").unwrap())
+            .skip_get_system_info(true)
+            .service_override(service_override)
+            .dns_load_balancing(None)
+            .build();
+        let mut connection = crate::Connection::connect(opts).await.unwrap();
+
+        let sem = Arc::new(Semaphore::new(0));
+        let mut req = PollWorkflowTaskQueueRequest::default().into_request();
+        req.extensions_mut().insert(AttemptSemaphore(sem.clone()));
+
+        let mut req_fut = connection.poll_workflow_task_queue(req);
+
+        // make sure we are blocked
+        for _ in 0..10 {
+            assert_matches!(
+                req_fut
+                    .as_mut()
+                    .poll(&mut Context::from_waker(noop_waker_ref())),
+                Poll::Pending
+            );
+        }
+
+        can_proceed.store(true, Ordering::Release);
+        sem.add_permits(1);
+        req_fut.await.unwrap();
     }
 }

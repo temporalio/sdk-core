@@ -6,7 +6,7 @@ use crate::{
     worker::{WorkerVersioningStrategy, worker_control_task_queue},
 };
 use backon::{BackoffBuilder, ExponentialBuilder};
-use futures_util::{StreamExt, TryStreamExt, stream};
+use futures_util::{StreamExt, TryStreamExt, future::BoxFuture, stream};
 use parking_lot::Mutex;
 use prost::Message;
 use prost_types::Duration as PbDuration;
@@ -19,7 +19,7 @@ use temporalio_client::{
     Connection, NamespacedClient, PayloadErrorLimits, RetryOptions, SharedReplaceableClient,
     grpc::{PayloadLimitsClient, WorkflowService},
     request_extensions::{
-        IsWorkerTaskLongPoll, NoRetryOnMatching, RetryCallback, RetryCallbackTrait,
+        AttemptSemaphore, IsWorkerTaskLongPoll, NoRetryOnMatching, RetryCallback,
         RetryConfigForCall, ThrottleRetryConfigForCall,
     },
     worker::ClientWorkerSet,
@@ -50,7 +50,7 @@ use temporalio_common::protos::{
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
 };
-use tokio::time::sleep;
+use tokio::{sync::Semaphore, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tonic::{IntoRequest, metadata::MetadataValue};
 use uuid::Uuid;
@@ -200,6 +200,8 @@ pub enum LegacyQueryResult {
     Failed(workflow_completion::Failure),
 }
 
+type InnerWorkflowClient = PayloadLimitsClient<SharedReplaceableClient<Connection>>;
+
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
     /// Shared connection handle, used for management operations (capabilities, identity, client
@@ -208,7 +210,7 @@ pub(crate) struct WorkerClientBag {
     /// Issues outbound gRPC calls, automatically attaching this worker's payload/memo error limits
     /// (set via `set_payload_error_limits`) so the gRPC layer can enforce them. Wraps a clone of
     /// `connection`, so a client replacement on `connection` is reflected here too.
-    client: PayloadLimitsClient<SharedReplaceableClient<Connection>>,
+    client: InnerWorkflowClient,
     namespace: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
     worker_instance_key: Uuid,
@@ -297,6 +299,33 @@ impl WorkerClientBag {
         } else {
             String::new()
         }
+    }
+
+    /// Performs common parts of task poll setup. `poll_options.task_queue` is not used and can be
+    /// moved out before calling this method.
+    #[allow(clippy::type_complexity)]
+    async fn poll_task<Req, Resp>(
+        &self,
+        poll_fn: fn(
+            &mut InnerWorkflowClient,
+            tonic::Request<Req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<Resp>>>,
+        request: Req,
+        poll_options: PollOptions,
+    ) -> Result<Resp> {
+        let mut req = request.into_request();
+        req.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = poll_options.no_retry {
+            req.extensions_mut().insert(nr);
+        }
+        if let Some(to) = poll_options.timeout_override {
+            req.set_timeout(to);
+        }
+        if let Some(sem) = poll_options.attempt_semaphore {
+            req.extensions_mut().insert(AttemptSemaphore(sem));
+        }
+
+        Ok(poll_fn(&mut self.client.clone(), req).await?.into_inner())
     }
 }
 
@@ -396,7 +425,7 @@ pub trait WorkerClient: Sync + Send {
         task_queue: String,
         task_queue_types: Vec<TaskQueueType>,
         final_heartbeat: Option<WorkerHeartbeat>,
-        retry_callback: Option<Box<dyn RetryCallbackTrait>>,
+        retry_callback: Option<RetryCallback>,
     ) -> Result<ShutdownWorkerResponse>;
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
@@ -445,6 +474,12 @@ pub struct PollOptions {
     pub no_retry: Option<NoRetryOnMatching>,
     /// Overrides the default RPC timeout for the poll request
     pub timeout_override: Option<Duration>,
+    /// If set, acquire a permit from the provided semaphore before the poll RPC call. The permit is
+    /// released when it's safe to cancel the poll (between retries), and reacquired before the next
+    /// RPC attempt. The permit is always leaked when the poll future resolves (on either
+    /// a successful response or non-retryable error). Blocking cancellation on this semaphore
+    /// ensures no server tasks are lost.
+    pub attempt_semaphore: Option<Arc<Semaphore>>,
 }
 /// Additional options specific to workflow task polling
 #[derive(Debug, Clone)]
@@ -470,24 +505,25 @@ pub struct PollNexusOptions {
 impl WorkerClient for WorkerClientBag {
     async fn poll_workflow_task(
         &self,
-        poll_options: PollOptions,
+        mut poll_options: PollOptions,
         wf_options: PollWorkflowOptions,
     ) -> Result<PollWorkflowTaskQueueResponse> {
+        let tq_name = std::mem::take(&mut poll_options.task_queue);
         let task_queue = if let Some(sticky) = wf_options.sticky_queue_name {
             TaskQueue {
                 name: sticky,
                 kind: TaskQueueKind::Sticky.into(),
-                normal_name: poll_options.task_queue,
+                normal_name: tq_name,
             }
         } else {
             TaskQueue {
-                name: poll_options.task_queue,
+                name: tq_name,
                 kind: TaskQueueKind::Normal.into(),
                 normal_name: "".to_string(),
             }
         };
         #[allow(deprecated)] // want to list all fields explicitly
-        let mut request = PollWorkflowTaskQueueRequest {
+        let request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
             identity: self.identity(),
@@ -497,34 +533,26 @@ impl WorkerClient for WorkerClientBag {
             worker_instance_key: self.worker_instance_key.to_string(),
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
-        }
-        .into_request();
-        request.extensions_mut().insert(IsWorkerTaskLongPoll);
-        if let Some(nr) = poll_options.no_retry {
-            request.extensions_mut().insert(nr);
-        }
-        if let Some(to) = poll_options.timeout_override {
-            request.set_timeout(to);
-        }
+        };
 
-        Ok(self
-            .client
-            .clone()
-            .poll_workflow_task_queue(request)
-            .await?
-            .into_inner())
+        self.poll_task(
+            InnerWorkflowClient::poll_workflow_task_queue,
+            request,
+            poll_options,
+        )
+        .await
     }
 
     async fn poll_activity_task(
         &self,
-        poll_options: PollOptions,
+        mut poll_options: PollOptions,
         act_options: PollActivityOptions,
     ) -> Result<PollActivityTaskQueueResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
-        let mut request = PollActivityTaskQueueRequest {
+        let request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: poll_options.task_queue,
+                name: std::mem::take(&mut poll_options.task_queue),
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
@@ -537,27 +565,18 @@ impl WorkerClient for WorkerClientBag {
             worker_instance_key: self.worker_instance_key.to_string(),
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
-        }
-        .into_request();
-        request.extensions_mut().insert(IsWorkerTaskLongPoll);
-        if let Some(nr) = poll_options.no_retry {
-            request.extensions_mut().insert(nr);
-        }
-        if let Some(to) = poll_options.timeout_override {
-            request.set_timeout(to);
-        }
-
-        Ok(self
-            .client
-            .clone()
-            .poll_activity_task_queue(request)
-            .await?
-            .into_inner())
+        };
+        self.poll_task(
+            InnerWorkflowClient::poll_activity_task_queue,
+            request,
+            poll_options,
+        )
+        .await
     }
 
     async fn poll_nexus_task(
         &self,
-        poll_options: PollOptions,
+        mut poll_options: PollOptions,
         nexus_options: PollNexusOptions,
     ) -> Result<PollNexusTaskQueueResponse> {
         let (kind, worker_version_capabilities, deployment_options) =
@@ -573,10 +592,10 @@ impl WorkerClient for WorkerClientBag {
                 )
             };
         #[allow(deprecated)] // want to list all fields explicitly
-        let mut request = PollNexusTaskQueueRequest {
+        let request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: poll_options.task_queue,
+                name: std::mem::take(&mut poll_options.task_queue),
                 kind: kind as i32,
                 normal_name: "".to_string(),
             }),
@@ -588,22 +607,13 @@ impl WorkerClient for WorkerClientBag {
             worker_heartbeat: Vec::new(),
             worker_instance_key: self.worker_instance_key.to_string(),
             poller_group_id: Default::default(),
-        }
-        .into_request();
-        request.extensions_mut().insert(IsWorkerTaskLongPoll);
-        if let Some(nr) = poll_options.no_retry {
-            request.extensions_mut().insert(nr);
-        }
-        if let Some(to) = poll_options.timeout_override {
-            request.set_timeout(to);
-        }
-
-        Ok(self
-            .client
-            .clone()
-            .poll_nexus_task_queue(request)
-            .await?
-            .into_inner())
+        };
+        self.poll_task(
+            InnerWorkflowClient::poll_nexus_task_queue,
+            request,
+            poll_options,
+        )
+        .await
     }
 
     async fn complete_workflow_task(
@@ -1018,7 +1028,7 @@ impl WorkerClient for WorkerClientBag {
         task_queue: String,
         task_queue_types: Vec<TaskQueueType>,
         final_heartbeat: Option<WorkerHeartbeat>,
-        retry_callback: Option<Box<dyn RetryCallbackTrait>>,
+        retry_callback: Option<RetryCallback>,
     ) -> Result<ShutdownWorkerResponse> {
         let mut final_heartbeat = final_heartbeat;
         if let Some(w) = final_heartbeat.as_mut() {
@@ -1040,7 +1050,7 @@ impl WorkerClient for WorkerClientBag {
         let retry_options = RetryOptions::builder()
             .initial_interval(Duration::from_secs(1))
             .multiplier(2.0)
-            .max_interval(max_duration)
+            .max_interval(Duration::from_secs(10))
             .max_elapsed_time(Some(max_duration))
             .max_retries(0)
             .build();
@@ -1051,8 +1061,8 @@ impl WorkerClient for WorkerClientBag {
         request
             .extensions_mut()
             .insert(ThrottleRetryConfigForCall(retry_options));
-        if let Some(cb) = retry_callback {
-            request.extensions_mut().insert(RetryCallback(cb));
+        if let Some(rcb) = retry_callback {
+            request.extensions_mut().insert(rcb);
         }
 
         Ok(
@@ -1401,6 +1411,7 @@ mod tests {
                         task_queue: "application-queue".to_string(),
                         no_retry: None,
                         timeout_override: None,
+                        attempt_semaphore: None,
                     },
                     PollNexusOptions {
                         worker_commands_queue: false,
@@ -1414,6 +1425,7 @@ mod tests {
                         task_queue: "worker-command-queue".to_string(),
                         no_retry: None,
                         timeout_override: None,
+                        attempt_semaphore: None,
                     },
                     PollNexusOptions {
                         worker_commands_queue: true,

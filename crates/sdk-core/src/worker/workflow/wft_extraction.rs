@@ -32,9 +32,7 @@ pub(super) enum WFTExtractorOutput {
         paginator: HistoryPaginator,
         update: HistoryUpdate,
         span: Span,
-        // Field isn't read, but we need to hold on to it.
-        #[allow(dead_code)]
-        rc: Arc<HistfetchRC>,
+        _rc: Arc<HistfetchRC>,
     },
     FailedFetch {
         run_id: String,
@@ -77,10 +75,6 @@ impl WFTExtractor {
                             attempt: wft.attempt,
                             workflow_type: wft.workflow_type.clone(),
                         };
-                        // Because we're unwrapping the tracked permit here, it's guaranteed
-                        // that the issuing dealer doesn't complete closing until we pulled the
-                        // last tracked task from wft_stream. This is necessary to ensure we
-                        // drain all eager WFTs before the stream closes.
                         let permit = match permit {
                             Either::Left(p) => p,
                             Either::Right(p) => p.into(),
@@ -137,7 +131,7 @@ impl WFTExtractor {
                                     paginator: req.paginator,
                                     update,
                                     span: req.span,
-                                    rc,
+                                    _rc: rc,
                                 },
                                 Err(err) => WFTExtractorOutput::FailedFetch {
                                     run_id: req.paginator.run_id,

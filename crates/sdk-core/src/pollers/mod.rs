@@ -26,7 +26,7 @@ pub(crate) use poll_buffer::MockPermittedPollBuffer;
 /// Error returned by the poller. Not to be confused with [`crate::worker::PollError`].
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum PollerError {
-    #[error("Poller has stopped, shutting down")]
+    #[error("Poller has stopped")]
     PollerStopped,
     #[error(transparent)]
     Tonic(#[from] tonic::Status),

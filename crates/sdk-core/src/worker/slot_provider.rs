@@ -59,6 +59,8 @@ pub(super) struct SlotProvider {
 }
 
 impl SlotProvider {
+    /// Note: `external_wft_tx` must remain open until `wft_semaphore` finalizes closing, or else
+    /// workflow tasks can be lost.
     pub(super) fn new(
         namespace: String,
         task_queue: String,

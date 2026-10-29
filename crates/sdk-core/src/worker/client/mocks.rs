@@ -69,6 +69,10 @@ pub fn setup_mock_worker_client(mock: &mut MockWorkerClient) {
 /// Create a mock manual client primed with basic necessary expectations.
 /// Because these expectations always take precedence, the behavior cannot be customized
 /// - use [`setup_mock_manual_worker_client`] if customization is needed.
+//
+// NOTE: In graceful shutdown scenarios, mock task poll methods MUST lock the semaphore for graceful
+// shutdown to work properly. If not locked, LongPollBuffer will think it's between retries and shut
+// down immediately.
 pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     let mut mock = MockManualWorkerClient::new();
     setup_mock_manual_worker_client(&mut mock);
@@ -87,6 +91,10 @@ pub(crate) fn setup_mock_manual_worker_client(mock: &mut MockManualWorkerClient)
 // Need a version of the mock that can return futures so we can return potentially pending
 // results. This is really annoying b/c of the async trait stuff. Need
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
+//
+// NOTE: In graceful shutdown scenarios, mock task poll methods MUST lock the semaphore for graceful
+// shutdown to work properly. If not locked, LongPollBuffer will think it's between retries and shut
+// down immediately.
 mockall::mock! {
     pub(crate) ManualWorkerClient {}
     #[allow(unused)]
@@ -187,7 +195,7 @@ mockall::mock! {
             task_queue: String,
             task_queue_types: Vec<TaskQueueType>,
             worker_heartbeat: Option<WorkerHeartbeat>,
-            retry_callback: Option<Box<dyn RetryCallbackTrait>>,
+            retry_callback: Option<RetryCallback>,
         ) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

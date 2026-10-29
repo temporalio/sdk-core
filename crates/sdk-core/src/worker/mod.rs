@@ -84,9 +84,12 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use temporalio_client::worker::{
-    CancelActivityCallback, ClientWorker, HeartbeatCallback, HeartbeatSuccessCallback,
-    SharedNamespaceWorkerTrait, Slot as SlotTrait,
+use temporalio_client::{
+    request_extensions::RetryCallback,
+    worker::{
+        CancelActivityCallback, ClientWorker, HeartbeatCallback, HeartbeatSuccessCallback,
+        SharedNamespaceWorkerTrait, Slot as SlotTrait,
+    },
 };
 #[cfg(test)]
 use temporalio_common::protos::temporal::api::namespace::v1::NamespaceInfo as ApiNamespaceInfo;
@@ -117,7 +120,7 @@ use temporalio_common::{
 use tokio::{
     select,
     sync::{mpsc::unbounded_channel, watch},
-    task::JoinHandle,
+    task::{JoinError, JoinHandle},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -468,6 +471,8 @@ pub struct Worker {
     /// Context for handling ShutdownWorker RPC call. Created in [`Self::initiate_shutdown`] and
     /// removed in [`Self::shutdown`].
     shutdown_rpc_context: Mutex<Option<ShutdownRpcContext>>,
+    /// Permit dealer for external WFT slot provider. Closed when shutdown is initiated.
+    external_wft_slots: Arc<ClosableMeteredPermitDealer<WorkflowSlotKind>>,
 }
 
 /// Namespace capabilities discovered via `describe_namespace`.
@@ -935,6 +940,7 @@ impl Worker {
         let worker_shutdown_token = shutdown_token.clone();
         let worker_local_act_mgr = local_act_mgr.clone();
         let worker_capabilities = capabilities.clone();
+        let worker_external_wft_slots = external_wft_slots.clone();
 
         // Build the poller-dependent subsystems lazily. This closure runs once, after namespace
         // capabilities have been fetched (see `Worker::validate`), so the effective poller behavior
@@ -959,7 +965,7 @@ impl Worker {
                             // Some replay tests combine a mock client with real pollers, and they
                             // don't need to use the external stream
                             let stream = if !client.is_mock() {
-                                let external_wft_slots = external_wft_slots.clone();
+                                //let external_wft_slots = external_wft_slots.clone();
                                 stream::select(
                                     stream,
                                     UnboundedReceiverStream::new(external_wft_rx)
@@ -1183,6 +1189,7 @@ impl Worker {
             status: worker_status,
             capabilities: worker_capabilities,
             shutdown_rpc_context: Mutex::new(None),
+            external_wft_slots: worker_external_wft_slots,
         })
     }
 
@@ -1243,21 +1250,27 @@ impl Worker {
         // one attempt before doing so. RPC error handling is done inside the task itself.
         let rpc_context = self.shutdown_rpc_context.lock().take();
         if let Some(mut rpc_context) = rpc_context {
-            select! {
-                res = &mut rpc_context.join_handle => {
-                    // In debug build, propagate panics. In release build, ignore.
-                    #[cfg(debug_assertions)]
-                    if let Err(e) = res && let Ok(e) = e.try_into_panic() {
-                        // In debug build, propagate panics.
-                        if cfg!(debug_assertions) {
-                            std::panic::resume_unwind(e);
-                        } else {
-                            warn!(error=?e, "Panic when reporting worker shutdown")
-                        }
+            fn handle_join(result: Result<(), JoinError>) {
+                if let Err(e) = result
+                    && let Ok(e) = e.try_into_panic()
+                {
+                    // In debug build, propagate panics.
+                    if cfg!(debug_assertions) {
+                        std::panic::resume_unwind(e);
+                    } else {
+                        warn!(error=?e, "Panic when reporting worker shutdown")
                     }
-                },
+                }
+            }
+
+            select! {
+                res = &mut rpc_context.join_handle => handle_join(res),
                 _ = rpc_context.first_attempt_done_token.cancelled() => {
                     rpc_context.join_handle.abort();
+                    // In debug build, join to propagate panics.
+                    // In release build, detach as to not slow down the shutdown.
+                    #[cfg(debug_assertions)]
+                    handle_join(rpc_context.join_handle.await);
                 }
             }
         }
@@ -1266,8 +1279,6 @@ impl Worker {
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
             _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                let _tracker = self.all_permits_tracker.lock().await;
-                error!("Waiting for all slot permits to release took too long!");
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
         }
@@ -1668,11 +1679,14 @@ impl Worker {
             );
         }
         let already_initiated_shutdown = self.shutdown_token.is_cancelled();
+        // Cancelling this token will also stop polling workflow tasks.
         self.shutdown_token.cancel();
         {
             *self.status.write() = WorkerStatus::ShuttingDown;
         }
-        // First, disable Eager Workflow Start
+
+        // Disable Eager Workflow Start.
+        self.external_wft_slots.close();
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
@@ -1680,13 +1694,13 @@ impl Worker {
                 .unregister_slot_provider(self.worker_instance_key);
         }
 
-        // Push a BumpStream message to the workflow activation queue. This ensures that
-        // any pending workflow activation polls will resolve, even if there are no other inputs.
+        // Bump workflow stream. This ensures that any pending workflow activation polls will
+        // resolve, even if there are no other inputs.
         if let Some(workflows) = self.task_subsystems.workflows.as_ref() {
             workflows.bump_stream();
         }
 
-        // Second, we want to stop polling of both activity and workflow tasks
+        // Stop polling activity tasks.
         if let Some(atm) = self.task_subsystems.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
@@ -1748,7 +1762,7 @@ impl Worker {
                     task_queue,
                     task_queue_types,
                     heartbeat,
-                    Some(Box::new(move |e| {
+                    Some(RetryCallback::new(move |e| {
                         if !first_attempt_done_token_clone.is_cancelled() {
                             warn!(error=?e, "Failed to report worker shutdown on first attempt");
                             first_attempt_done_token_clone.cancel();
@@ -2644,7 +2658,10 @@ mod tests {
         namespace::v1::namespace_info::Capabilities,
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
-    use tokio::sync::{Notify, oneshot};
+    use tokio::{
+        join,
+        sync::{Notify, oneshot},
+    };
 
     #[tokio::test]
     async fn activity_timeouts_maintain_permit() {
@@ -2937,13 +2954,17 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn shutdown_blocks_until_rpc_first_attempt_done(#[values(true, false)] success: bool) {
+    async fn shutdown_blocks_until_shutdown_rpc_first_attempt_done(
+        #[values(true, false)] success: bool,
+    ) {
         let (shutdown_retry_cb_tx, shutdown_retry_cb_rx) = oneshot::channel();
+        let poll_rpc_started = Arc::new(Notify::new());
         let finish_shutdown_rpc = Arc::new(Notify::new());
-        let finish_poll_rpc = CancellationToken::new();
+        let finish_poll_rpc = Arc::new(Notify::new());
 
         let mut mock_client = MockManualWorkerClient::new();
         {
+            let poll_rpc_started = poll_rpc_started.clone();
             let finish_shutdown_rpc = finish_shutdown_rpc.clone();
             let finish_poll_rpc = finish_poll_rpc.clone();
 
@@ -2966,10 +2987,14 @@ mod tests {
             mock_client
                 .expect_poll_activity_task()
                 .times(1)
-                .returning(move |_, _| {
-                    let finish_poll_rpc = finish_poll_rpc.clone();
+                .return_once(move |opts, _| {
                     async move {
-                        finish_poll_rpc.cancelled().await;
+                        // Hold the semaphore so that shutdown waits for the poll. Because we're not
+                        // shutting down yet, it should be possible to acquire the permit immediately.
+                        let sem = opts.attempt_semaphore.unwrap();
+                        let _permit = sem.try_acquire().unwrap();
+                        poll_rpc_started.notify_one();
+                        finish_poll_rpc.notified().await;
                         Ok(PollActivityTaskQueueResponse::default())
                     }
                     .boxed()
@@ -3011,16 +3036,86 @@ mod tests {
         let mut shutdown_retry_cb = shutdown_retry_cb_rx.await.unwrap();
         advance_fut!(poll_fut);
 
-        finish_poll_rpc.cancel();
+        finish_poll_rpc.notify_one();
         assert_matches!(poll_fut.await, Err(PollError::ShutDown));
         advance_fut!(shutdown_fut);
 
         if success {
             finish_shutdown_rpc.notify_one();
         } else {
-            shutdown_retry_cb(&tonic::Status::new(tonic::Code::Internal, "boom"));
+            shutdown_retry_cb.call(&tonic::Status::new(tonic::Code::Internal, "boom"));
         }
 
         shutdown_fut.await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_proceeds_on_poll_retryable_error() {
+        let (attempt_sem_tx, attempt_sem_rx) = oneshot::channel();
+
+        let mut mock_client = MockManualWorkerClient::new();
+        mock_client.expect_describe_namespace().returning(|| {
+            async {
+                Ok(DescribeNamespaceResponse {
+                    namespace_info: Some(ApiNamespaceInfo {
+                        capabilities: Some(Capabilities {
+                            worker_poll_complete_on_shutdown: true,
+                            ..Capabilities::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            }
+            .boxed()
+        });
+
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .return_once(move |opts, _| {
+                async move {
+                    attempt_sem_tx
+                        .send(opts.attempt_semaphore.unwrap())
+                        .unwrap();
+                    future::pending().await
+                }
+                .boxed()
+            });
+
+        setup_mock_manual_worker_client(&mut mock_client);
+
+        let cfg = test_worker_cfg()
+            .max_outstanding_activities(1usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new_test(cfg, mock_client);
+        worker.validate().await.unwrap();
+
+        let poll_fut = worker.poll_activity_task();
+        advance_fut!(poll_fut); // necessary to populate the channel
+        let sem = attempt_sem_rx.await.unwrap();
+
+        // By acquiring and releasing the semaphore, we are simulating RPC attempts. Before
+        // shutdown, acquiring should always succeed immediately and the future should stay blocked.
+        let permit = sem.try_acquire().unwrap();
+        advance_fut!(poll_fut);
+        drop(permit);
+        advance_fut!(poll_fut);
+        let permit = sem.try_acquire().unwrap();
+        advance_fut!(poll_fut);
+        drop(permit);
+        advance_fut!(poll_fut);
+        let permit = sem.try_acquire().unwrap();
+
+        // Shutting down - both futures should stay blocked until we release the permit.
+        let shutdown_fut = worker.shutdown();
+        advance_fut!(shutdown_fut);
+        advance_fut!(poll_fut);
+        advance_fut!(shutdown_fut);
+
+        drop(permit);
+        let (poll_result, _) = join!(poll_fut, shutdown_fut);
+        assert_matches!(poll_result, Err(PollError::ShutDown));
     }
 }

@@ -238,8 +238,8 @@ impl Workflows {
                 local.block_on(
                     &rt,
                     async move {
-                        // However, we want to avoid plowing ahead until we've been asked to poll at
-                        // least once. This supports activity-only workers.
+                        // We want to avoid plowing ahead until we've been asked to poll at least
+                        // once. This supports activity-only workers.
                         let do_poll = tokio::select! {
                             sp = start_polling_rx => {
                                 sp.is_ok()
@@ -727,7 +727,7 @@ impl Workflows {
         rx
     }
 
-    /// Populates the workflow stream with no-op message. This ensures that any pending workflow
+    /// Wakes the workflow stream with no-op message. This ensures that any pending workflow
     /// activation polls will resolve, like during shutdown, even if there are no other inputs.
     pub(super) fn bump_stream(&self) {
         self.notify_check_shutdown.notify_one();

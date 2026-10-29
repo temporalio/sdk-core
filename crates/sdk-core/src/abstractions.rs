@@ -3,11 +3,12 @@
 pub(crate) mod take_cell;
 
 use crate::{MetricsContext, worker::*};
+use parking_lot::Mutex;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use temporalio_common::{telemetry::metrics::TemporalMeter, worker::WorkerDeploymentVersion};
@@ -280,13 +281,15 @@ impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
 /// Close completes when all permits have been returned.
 pub(crate) struct ClosableMeteredPermitDealer<SK: SlotKind> {
     inner: Arc<MeteredPermitDealer<SK>>,
-    outstanding_permits: AtomicUsize,
-    close_requested: AtomicBool,
+    state: Mutex<ClosableMeteredPermitDealerState>,
     close_complete_token: CancellationToken,
 }
 
-// All atomic accesses must use SeqCst ordering to guarantee consistency between outstanding_permits
-// and close_requested.
+struct ClosableMeteredPermitDealerState {
+    outstanding_permits: usize,
+    close_requested: bool,
+}
+
 impl<SK> ClosableMeteredPermitDealer<SK>
 where
     SK: SlotKind,
@@ -294,8 +297,10 @@ where
     pub(crate) fn new_arc(sem: Arc<MeteredPermitDealer<SK>>) -> Arc<Self> {
         Arc::new(Self {
             inner: sem,
-            outstanding_permits: Default::default(),
-            close_requested: AtomicBool::new(false),
+            state: Mutex::new(ClosableMeteredPermitDealerState {
+                outstanding_permits: 0,
+                close_requested: false,
+            }),
             close_complete_token: CancellationToken::new(),
         })
     }
@@ -307,8 +312,10 @@ where
 
     /// Request to close the semaphore and prevent new permits from being acquired.
     pub(crate) fn close(&self) {
-        self.close_requested.store(true, Ordering::SeqCst);
-        if self.outstanding_permits.load(Ordering::SeqCst) == 0 {
+        let mut state = self.state.lock();
+        state.close_requested = true;
+        if state.outstanding_permits == 0 {
+            drop(state);
             self.close_complete_token.cancel();
         }
     }
@@ -322,10 +329,13 @@ where
     pub(crate) fn try_acquire_owned(
         self: &Arc<Self>,
     ) -> Result<TrackedOwnedMeteredSemPermit<SK>, ()> {
-        if self.close_requested.load(Ordering::Acquire) {
+        let mut state = self.state.lock();
+        if state.close_requested {
             return Err(());
         }
-        self.outstanding_permits.fetch_add(1, Ordering::Release);
+        state.outstanding_permits += 1;
+        drop(state);
+
         let res = self.inner.try_acquire_owned();
         if res.is_err() {
             self.release_outstanding_permit();
@@ -347,15 +357,11 @@ where
     }
 
     fn release_outstanding_permit(&self) {
-        // We must release permit before checking close_requested to guarantee that if this is the
-        // last permit but we observe close_requested as false, then close() will cancel the token.
-        self.outstanding_permits.fetch_sub(1, Ordering::SeqCst);
-        if self.close_requested.load(Ordering::SeqCst) {
-            // Another thread might've observed close_requested as false and acquired a new permit
-            // after we released, so we must check outstanding_permits again.
-            if self.outstanding_permits.load(Ordering::SeqCst) == 0 {
-                self.close_complete_token.cancel();
-            }
+        let mut state = self.state.lock();
+        state.outstanding_permits -= 1;
+        if state.close_requested && state.outstanding_permits == 0 {
+            drop(state);
+            self.close_complete_token.cancel();
         }
     }
 }
@@ -492,10 +498,10 @@ pub(crate) mod tests {
         let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         let perm = sem.try_acquire_owned().unwrap();
-        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        let permits = sem.state.lock().outstanding_permits;
         assert_eq!(permits, 1);
         drop(perm);
-        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        let permits = sem.state.lock().outstanding_permits;
         assert_eq!(permits, 0);
     }
 

@@ -7,8 +7,10 @@ use crate::RetryOptions;
 use dyn_clone::DynClone;
 use std::{
     fmt::{Debug, Formatter},
+    sync::Arc,
     time::Duration,
 };
+use tokio::sync::Semaphore;
 
 /// A request extension that, when set, should make the retry behavior consider this call to be a
 /// worker task long poll.
@@ -33,22 +35,42 @@ pub struct RetryConfigForCall(pub RetryOptions);
 #[derive(Clone, Debug)]
 pub struct ThrottleRetryConfigForCall(pub RetryOptions);
 
-/// Closure type that can be used in [`RetryCallback`].
-pub trait RetryCallbackTrait: FnMut(&tonic::Status) + DynClone + Send + Sync + 'static {}
+/// A request extension that calls a callback after a request failed if it's going to be retried.
+#[derive(Clone)]
+pub struct RetryCallback(Box<dyn RetryCallbackTrait>);
 
-impl<T> RetryCallbackTrait for T where T: FnMut(&tonic::Status) + Clone + Send + Sync + 'static {}
+impl RetryCallback {
+    /// Make a new instance from the provided closure.
+    pub fn new(callback: impl FnMut(&tonic::Status) + Clone + Send + Sync + 'static) -> Self {
+        Self(Box::new(callback))
+    }
 
-dyn_clone::clone_trait_object!(RetryCallbackTrait);
-
-impl Debug for Box<dyn RetryCallbackTrait> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<callback>")
+    /// Call the callback.
+    pub fn call(&mut self, status: &tonic::Status) {
+        self.0(status);
     }
 }
 
-/// A request extension that calls a callback after a request failed if it's going to be retried.
+impl Debug for RetryCallback {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RetryCallback")
+    }
+}
+
+/// Internal. Closure type for [`RetryCallback`].
+pub(crate) trait RetryCallbackTrait:
+    FnMut(&tonic::Status) + DynClone + Send + Sync + 'static
+{
+}
+impl<T> RetryCallbackTrait for T where T: FnMut(&tonic::Status) + Clone + Send + Sync + 'static {}
+dyn_clone::clone_trait_object!(RetryCallbackTrait);
+
+/// A request extension that obtains a permit from the provided semaphore before every attempt.
+/// On a retryable error, the permit is released until next attempt. On the final response, whether
+/// successful or an error, the permit is leaked (this can be used to implement cancellation logic
+/// that only runs between attempts and not during a request and not after completion).
 #[derive(Clone, Debug)]
-pub struct RetryCallback(pub Box<dyn RetryCallbackTrait>);
+pub struct AttemptSemaphore(pub Arc<Semaphore>);
 
 /// Per-call payload/memo size error limits, attached to a request's extensions by a caller that
 /// wants error-level enforcement on this call.

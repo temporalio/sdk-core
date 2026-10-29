@@ -778,7 +778,7 @@ impl From<PollerResult<WFTExtractorOutput>> for WFStreamInput {
                 paginator,
                 update,
                 span,
-                rc: _,
+                _rc: _,
             }) => WFStreamInput::Local(Box::new(LocalInput {
                 input: LocalInputs::FetchedPageCompletion { paginator, update },
                 span,
