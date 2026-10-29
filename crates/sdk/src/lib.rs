@@ -148,7 +148,7 @@ use temporalio_common::protos::temporal::api::worker::v1::{PluginInfo, StorageDr
 use temporalio_common::{
     ActivityDefinition, WorkflowDefinition,
     data_converters::{
-        ActivitySerializationContext, DataConverter, SerializationContext,
+        ActivitySerializationContext, DataConverter, PayloadConversionError, SerializationContext,
         SerializationContextData, WorkflowSerializationContext,
     },
     external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
@@ -157,7 +157,7 @@ use temporalio_common::{
         TaskToken,
         coresdk::{
             ActivityTaskCompletion,
-            activity_result::ActivityExecutionResult,
+            activity_result::{self, ActivityExecutionResult, activity_execution_result},
             activity_task::{ActivityTask, activity_task},
             common::NamespacedWorkflowExecution,
             workflow_activation::{WorkflowActivation, workflow_activation_job::Variant},
@@ -167,7 +167,9 @@ use temporalio_common::{
             workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
         },
         temporal::api::{
-            common::v1::Payload, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+            common::v1::Payload,
+            enums::v1::{ActivityTaskFailedCause, WorkflowTaskFailedCause},
+            failure::v1::Failure,
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -1009,7 +1011,7 @@ async fn encode_workflow_completion(
             }
             None => {}
         }
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, PayloadConversionError>(())
     }
     .await;
     if let Err(err) = encoded {
@@ -1020,8 +1022,37 @@ async fn encode_workflow_completion(
                 message: format!("Failed encoding completion: {err}"),
                 ..Default::default()
             },
-            Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+            Some(workflow_task_failed_cause(&err)),
         );
+    }
+}
+
+fn workflow_task_failed_cause(err: &PayloadConversionError) -> WorkflowTaskFailedCause {
+    match err {
+        PayloadConversionError::ExternalStorage(_) => {
+            WorkflowTaskFailedCause::ExternalStorageFailure
+        }
+        _ => WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+    }
+}
+
+fn activity_processing_failure(
+    message: String,
+    err: &PayloadConversionError,
+) -> ActivityExecutionResult {
+    let cause = match err {
+        PayloadConversionError::ExternalStorage(_) => {
+            ActivityTaskFailedCause::ExternalStorageFailure
+        }
+        _ => ActivityTaskFailedCause::ActivityWorkerUnhandledFailure,
+    };
+    ActivityExecutionResult {
+        status: Some(activity_execution_result::Status::Failed(
+            activity_result::Failure {
+                failure: Some(Failure::application_failure(message, false)),
+                cause: cause as i32,
+            },
+        )),
     }
 }
 
@@ -1038,15 +1069,15 @@ async fn encode_activity_completion(
         )
         .await?;
         store_external_payloads(completion, data_converter, target).await?;
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, PayloadConversionError>(())
     }
     .await;
     if let Err(err) = encoded {
         error!(error = %err, "Failed encoding activity task completion");
-        completion.result = Some(ActivityExecutionResult::fail(Failure::application_failure(
+        completion.result = Some(activity_processing_failure(
             format!("Failed encoding activity completion: {err}"),
-            false,
-        )));
+            &err,
+        ));
     }
 }
 
@@ -1367,7 +1398,7 @@ impl Worker {
                                     &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
                                 )
                                 .await?;
-                                Ok::<_, anyhow::Error>(())
+                                Ok::<_, PayloadConversionError>(())
                             }
                             .await;
                             if let Err(err) = decoded {
@@ -1380,9 +1411,7 @@ impl Worker {
                                             message: format!("Failed decoding activation: {err}"),
                                             ..Default::default()
                                         },
-                                        Some(
-                                            WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
-                                        ),
+                                        Some(workflow_task_failed_cause(&err)),
                                     ))
                                     .expect("Completion channel intact");
                                 continue;
@@ -1483,18 +1512,16 @@ impl Worker {
                                 ),
                             )
                             .await?;
-                            Ok::<_, anyhow::Error>(())
+                            Ok::<_, PayloadConversionError>(())
                         }
                         .await;
                         if let Err(err) = decoded {
                             error!(error = %err, "Failed decoding activity task");
                             let mut completion = ActivityTaskCompletion {
                                 task_token: activity.task_token,
-                                result: Some(ActivityExecutionResult::fail(
-                                    Failure::application_failure(
-                                        format!("Failed decoding activity task: {err}"),
-                                        false,
-                                    ),
+                                result: Some(activity_processing_failure(
+                                    format!("Failed decoding activity task: {err}"),
+                                    &err,
                                 )),
                             };
                             encode_activity_completion(

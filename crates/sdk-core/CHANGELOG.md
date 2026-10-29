@@ -53,6 +53,9 @@ relevant information.
   nondeterminism while retaining compatibility with histories recorded before these checks.
 
 ### Fixed
+* A workflow task failure reported with the cause `WORKFLOW_TASK_FAILED_CAUSE_EXTERNAL_STORAGE_FAILURE`
+  is now counted on `workflow_task_execution_failed` with `failure_reason="ExternalStorageError"`,
+  matching activity failures with the storage cause. It was previously counted as `WorkflowError`.
 * Ephemeral dev and test servers now reserve automatically selected ports on macOS, preventing
   intermittent address-in-use errors when other processes allocate ports concurrently.
 * Resource-based worker tuners now read CPU usage and quotas from standard cgroup v1 mounts. Workers
