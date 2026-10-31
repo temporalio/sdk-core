@@ -18,7 +18,7 @@ import "temporal/api/stream/v1/message.proto";
 message OpenWriterRequest {
     reserved 4, 7;
     string namespace = 1;
-    temporal.api.stream.v1.StreamRef stream = 2;
+    temporal.api.stream.v1.StreamHandle handle = 2;
     temporal.api.stream.v1.Producer producer = 3;
     // A write sends at most this many Records in one batch. Zero is 1000.
     int32 max_batch_size = 5;

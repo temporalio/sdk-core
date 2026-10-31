@@ -17,7 +17,7 @@ import "temporal/api/failure/v1/message.proto";
 
 // Experimental. Might change in the future.
 // Identifies one Stream. The id is opaque to callers.
-message StreamRef {
+message StreamHandle {
     string id = 1;
     // Unset for a client's Stream. For a Workflow, business_id is the Workflow ID and run_id is
     // the first execution run id of its run chain. For a Standalone Activity, business_id is the
@@ -25,7 +25,7 @@ message StreamRef {
     // name its owner.
     temporal.api.common.v1.Execution owner = 2;
     // The name of the backend that holds the Stream, as the Worker and client config register
-    // it, so every process routes a ref it receives. Empty is the default backend. The Store
+    // it, so every process routes a handle it receives. Empty is the default backend. The Store
     // never reads it.
     string backend = 3;
 }
@@ -70,7 +70,7 @@ message AppendRecord {
 }
 
 // Experimental. Might change in the future.
-message Supersession {
+message StreamSuperseded {
     temporal.api.enums.v1.StreamProducerKind producer_kind = 1;
     string producer_id = 2;
     ProducerEpoch epoch = 3;
@@ -112,9 +112,10 @@ message StreamRecord {
     // A read item is a Record, a Superseded item or the close.
     oneof item {
         StreamData data = 2;
-        // The first batch of a higher epoch carries it. It withdraws the earlier Records that its
-        // facts name, and a reader drops them.
-        Supersession superseded = 3;
+        // The Store keeps only the withdrawal facts of the first batch of a higher epoch. A read
+        // builds this item from them. It withdraws the earlier Records that the facts name, and a
+        // reader drops them.
+        StreamSuperseded superseded = 3;
         StreamClose close = 4;
     }
 }

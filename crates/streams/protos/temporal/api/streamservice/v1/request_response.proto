@@ -36,16 +36,16 @@ message CreateStreamRequest {
     // Workflow only. The previous run on a retry run's first create, to withdraw its Records.
     string withdraw_run = 4;
     // The Workflow run that owns the Stream. Workflow kind, with its run_id and epoch. It needs a
-    // ref whose owner names the run's chain.
+    // handle whose owner names the run's chain.
     temporal.api.stream.v1.Producer owner = 6;
     // Only the server reads it. The server closes the Stream with the outcome of the owner's run
-    // chain, terminate and timeout included. It needs owner, and a ref with a Workflow owner.
+    // chain, terminate and timeout included. It needs owner, and a handle with a Workflow owner.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "with" ties the close to the owner's run chain. --)
     bool close_with_run = 7;
-    // The ref of the Stream, with stream_id as its id. A Workflow-owned Stream sets the ref's
-    // owner, which names the owner's run chain.
-    temporal.api.stream.v1.StreamRef ref = 8;
+    // The handle of the Stream, with stream_id as its id. A Workflow-owned Stream sets the
+    // handle's owner, which names the owner's run chain.
+    temporal.api.stream.v1.StreamHandle stream_handle = 8;
     // Only the server reads it. The server checks that the token is the Activity's current
     // attempt, so a caller can't put a Stream into a Standalone Activity it isn't.
     bytes task_token = 9;
@@ -55,8 +55,8 @@ message CreateStreamRequest {
 message CreateStreamResponse {
     reserved 3;
     reserved "status";
-    // The ref, with the owner of a Workflow-owned Stream.
-    temporal.api.stream.v1.StreamRef stream = 1;
+    // The handle, with the owner of a Workflow-owned Stream.
+    temporal.api.stream.v1.StreamHandle handle = 1;
     bool created = 2;
 }
 
@@ -65,7 +65,7 @@ message CreateStreamResponse {
 // (detail stream_format_too_new). NOT_FOUND if absent.
 message AppendRecordsRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamRef stream = 2;
+    temporal.api.stream.v1.StreamHandle handle = 2;
     // Required outside a Workflow. In a Workflow the transport sets it.
     temporal.api.stream.v1.Producer producer = 3;
     // The batch number in this epoch. With the Producer and epoch it is the dedupe key. Zero takes
@@ -96,7 +96,7 @@ message AppendRecordsResponse {
 // Experimental. Might change in the future.
 message CloseStreamRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamRef stream = 2;
+    temporal.api.stream.v1.StreamHandle handle = 2;
     temporal.api.stream.v1.Producer producer = 3;
     temporal.api.common.v1.Payload result = 4;
     // The close status comes from it. No failure is COMPLETED. A failure is CANCELED when it has
@@ -121,7 +121,7 @@ message CloseStreamResponse {
 // Experimental. Might change in the future.
 message ReadRecordsRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamRef stream = 2;
+    temporal.api.stream.v1.StreamHandle handle = 2;
     // Start at this offset. Zero uses start. OUT_OF_RANGE if past the newest offset + 1.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "from" and "to" mark the ends of a range of offsets. --)
@@ -175,7 +175,7 @@ message ReadRecordsResponse {
 // Experimental. Might change in the future.
 message DescribeStreamRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamRef stream = 2;
+    temporal.api.stream.v1.StreamHandle handle = 2;
 }
 
 // Experimental. Might change in the future.
