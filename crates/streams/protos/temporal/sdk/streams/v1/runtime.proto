@@ -11,8 +11,8 @@ import "temporal/api/stream/v1/message.proto";
 // Method `OpenWriter`, asynchronous. A writer for an Activity, a Local Activity or a client
 // Producer, which keeps its epoch and `sequence` order. A writer of a Local Activity, or of an
 // Activity attempt above 1, first sends an empty batch, so that the new epoch withdraws the earlier
-// one's Records. The handles of one Producer epoch on one Stream share one writer. Each open adds a
-// handle, and each `CloseWriter` or `FreeWriter` releases one. The batches of every writer in a
+// one's Records. The opens of one Producer epoch on one Stream share one writer. Each open adds a
+// reference, and each `CloseWriter` or `FreeWriter` releases one. The batches of every writer in a
 // process take their `sequence` from one counter, so a writer that opens again after its close
 // continues above its earlier batches.
 message OpenWriterRequest {
