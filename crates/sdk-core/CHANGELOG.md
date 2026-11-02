@@ -34,6 +34,9 @@ relevant information.
 ## Unreleased
 
 ### Added
+* Support best-effort Workflow Heartbeat Notifications on the worker control queue, allowing early
+  Workflow Task heartbeats at safe yield points while Local Activity work remains pending. Ready
+  notifications take priority over queued Local Activity completions.
 * A local activity's `ActivityTask.Start` has `workflow_task` (field 21), with the started event
   id, attempt and start time of the workflow task in which Core dispatched it. `workflow_task`
   also has `previous_started_event_id`, `previous_attempt` and `previous_started_time`, which
