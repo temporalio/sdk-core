@@ -14,7 +14,11 @@ use futures::{
     future::{self, BoxFuture},
     stream::{FuturesUnordered, TryStreamExt},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 
 use prost::Message;
 use temporalio_common_wasm::data_converters::{
@@ -38,10 +42,11 @@ pub(crate) async fn store_in<M: PayloadVisitable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
     target: Option<&StorageDriverTargetInfo>,
+    concurrency: NonZeroUsize,
 ) -> Result<(), ExternalStorageError> {
     match storage {
         Some(storage) => {
-            ExternalStorageRunner::new(storage)
+            ExternalStorageRunner::new(storage, concurrency)
                 .store_in(message, target)
                 .await
         }
@@ -57,10 +62,11 @@ pub(crate) async fn store_in<M: PayloadVisitable + Send>(
 pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
+    concurrency: NonZeroUsize,
 ) -> Result<(), ExternalStorageError> {
     match storage {
         Some(storage) => {
-            ExternalStorageRunner::new(storage)
+            ExternalStorageRunner::new(storage, concurrency)
                 .retrieve_in(message)
                 .await
         }
@@ -88,12 +94,14 @@ pub(crate) struct ExternalStorageRunner<'a> {
     storage: &'a ExternalStorage,
     store_limiter: Arc<dyn StorageDriverLimiter<Payload>>,
     retrieve_limiter: Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
+    concurrency: NonZeroUsize,
 }
 
 impl<'a> ExternalStorageRunner<'a> {
-    pub(crate) fn new(storage: &'a ExternalStorage) -> Self {
+    pub(crate) fn new(storage: &'a ExternalStorage, concurrency: NonZeroUsize) -> Self {
         Self {
             storage,
+            concurrency,
             store_limiter: Arc::new(UnboundedLimiter),
             retrieve_limiter: Arc::new(UnboundedLimiter),
         }
@@ -111,9 +119,10 @@ impl<'a> ExternalStorageRunner<'a> {
             storage: self.storage,
             target,
             limiter: &self.store_limiter,
-            error: None,
+            error: Mutex::new(None),
         };
-        Self::walk(message, store, |v| v.error.take()).await
+        self.walk(message, store, |v| v.error.into_inner().unwrap())
+            .await
     }
 
     /// Replace every reference in a message with the payload it points at.
@@ -126,20 +135,22 @@ impl<'a> ExternalStorageRunner<'a> {
         let retrieve = RetrievePayloadsVisitor {
             storage: self.storage,
             limiter: &self.retrieve_limiter,
-            error: None,
+            error: Mutex::new(None),
         };
-        Self::walk(message, retrieve, |v| v.error.take()).await
+        self.walk(message, retrieve, |v| v.error.into_inner().unwrap())
+            .await
     }
 
     /// The visitor reports only that it failed, so the typed error it captured is preferred over the
     /// placeholder that stopped the walk.
-    async fn walk<M: PayloadVisitable + Send, V: AsyncPayloadVisitor + Send>(
+    async fn walk<M: PayloadVisitable + Send, V: AsyncPayloadVisitor + Sync>(
+        &self,
         message: &mut M,
-        mut visitor: V,
-        take_error: impl FnOnce(&mut V) -> Option<ExternalStorageError>,
+        visitor: V,
+        take_error: impl FnOnce(V) -> Option<ExternalStorageError>,
     ) -> Result<(), ExternalStorageError> {
-        let walked = message.visit_payloads_mut(&mut visitor).await;
-        if let Some(error) = take_error(&mut visitor) {
+        let walked = message.visit_payloads_mut(&visitor, self.concurrency).await;
+        if let Some(error) = take_error(visitor) {
             return Err(error);
         }
         walked.map_err(|e| ExternalStorageError::Walk(Box::new(e)))
@@ -206,11 +217,11 @@ async fn retrieve_payloads(
 /// Keep a pass's typed error aside and stop the walk with a placeholder, since the walk can only
 /// report a [`PayloadConversionError`].
 fn stop_walk(
-    slot: &mut Option<ExternalStorageError>,
+    slot: &Mutex<Option<ExternalStorageError>>,
     result: Result<(), ExternalStorageError>,
 ) -> Result<(), PayloadConversionError> {
     result.map_err(|e| {
-        *slot = Some(e);
+        *slot.lock().unwrap() = Some(e);
         PayloadConversionError::EncodingError("external storage pass failed".into())
     })
 }
@@ -219,26 +230,26 @@ struct StorePayloadsVisitor<'a> {
     storage: &'a ExternalStorage,
     target: Option<&'a StorageDriverTargetInfo>,
     limiter: &'a Arc<dyn StorageDriverLimiter<Payload>>,
-    error: Option<ExternalStorageError>,
+    error: Mutex<Option<ExternalStorageError>>,
 }
 
 payload_visitor!(StorePayloadsVisitor<'_>, |this, payloads| {
     let mut payloads = payloads;
     let result = store_payloads(&mut payloads, this.storage, this.target, this.limiter).await;
-    stop_walk(&mut this.error, result)?;
+    stop_walk(&this.error, result)?;
     payloads
 });
 
 struct RetrievePayloadsVisitor<'a> {
     storage: &'a ExternalStorage,
     limiter: &'a Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
-    error: Option<ExternalStorageError>,
+    error: Mutex<Option<ExternalStorageError>>,
 }
 
 payload_visitor!(RetrievePayloadsVisitor<'_>, |this, payloads| {
     let mut payloads = payloads;
     let result = retrieve_payloads(&mut payloads, this.storage, this.limiter).await;
-    stop_walk(&mut this.error, result)?;
+    stop_walk(&this.error, result)?;
     payloads
 });
 
@@ -339,7 +350,6 @@ mod tests {
     };
     use anyhow::anyhow;
     use futures::future::{self, BoxFuture};
-    use std::sync::Mutex;
     use temporalio_common_wasm::data_converters::{
         StorageDriver, StorageDriverError, StorageDriverPermit, StorageDriverSelector,
     };
@@ -956,7 +966,7 @@ mod tests {
         )
         .unwrap()
         .with_payload_size_threshold(1);
-        let runner = ExternalStorageRunner::new(&storage);
+        let runner = ExternalStorageRunner::new(&storage, NonZeroUsize::MIN);
         let mut request = request_with_large_payloads();
         let before = request.clone();
 
@@ -975,7 +985,7 @@ mod tests {
     async fn the_runner_reports_a_driver_it_does_not_know() {
         let batches = Arc::new(Mutex::new(vec![]));
         let storage = storage("mem", Arc::clone(&batches));
-        let runner = ExternalStorageRunner::new(&storage);
+        let runner = ExternalStorageRunner::new(&storage, NonZeroUsize::MIN);
         // A reference to the registered driver sits beside the unknown one.
         let mut request = SignalWithStartWorkflowExecutionRequest {
             input: Some(Payloads {
@@ -1046,7 +1056,7 @@ mod tests {
         stored: Arc<Mutex<Vec<Payload>>>,
     ) {
         let storage = storage_with_threshold(1, stored);
-        let runner = ExternalStorageRunner::new(&storage);
+        let runner = ExternalStorageRunner::new(&storage, NonZeroUsize::MIN);
         runner.store_in(request, None).await.unwrap();
     }
 
@@ -1077,7 +1087,7 @@ mod tests {
     async fn every_other_payload_bearing_field_is_retrieved() {
         let batches = Arc::new(Mutex::new(vec![]));
         let storage = storage("mem", Arc::clone(&batches));
-        let runner = ExternalStorageRunner::new(&storage);
+        let runner = ExternalStorageRunner::new(&storage, NonZeroUsize::MIN);
         let mut request = request_with_references();
         let search_attributes = request.search_attributes.clone();
 
@@ -1108,8 +1118,12 @@ mod tests {
         let mut request = request_with_large_payloads();
         let before = request.clone();
 
-        store_in(None, &mut request, None).await.unwrap();
-        retrieve_in(None, &mut request).await.unwrap();
+        store_in(None, &mut request, None, NonZeroUsize::MIN)
+            .await
+            .unwrap();
+        retrieve_in(None, &mut request, NonZeroUsize::MIN)
+            .await
+            .unwrap();
 
         assert_eq!(request, before);
     }

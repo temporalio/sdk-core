@@ -4,7 +4,7 @@ use crate::{
 #[cfg(feature = "experimental")]
 use crate::{ClientPlugin, ErasedClientPlugin};
 use http::Uri;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration};
 use temporalio_common::{
     ActivityCloseTimeouts, MemoValues, RetryPolicy, VersioningOverride,
     data_converters::{
@@ -592,6 +592,7 @@ impl WorkflowStartOptions {
             &mut memo,
             data_converter.codec(),
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            NonZeroUsize::MIN,
         )
         .await?;
         Ok(Some(memo))

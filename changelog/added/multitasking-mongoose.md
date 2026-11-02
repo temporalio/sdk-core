@@ -1,0 +1,1 @@
+Experimental `WorkerOptions::max_workflow_task_payload_concurrency` lets a worker encode, decode, and move to and from external storage several payload fields of a workflow activation or completion at once, which speeds up codecs and storage drivers that do I/O. It defaults to 1, keeping today's one-field-at-a-time behavior.

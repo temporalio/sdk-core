@@ -8,7 +8,8 @@ use crate::{
     data_converters::{PayloadCodec, PayloadConversionError, SerializationContextData},
     protos::temporal::api::common::v1::{Payload, Payloads},
 };
-use futures::future::BoxFuture;
+use futures::{FutureExt, StreamExt, TryStreamExt, future::BoxFuture, stream};
+use std::num::NonZeroUsize;
 
 /// Represents a payload field in a proto message.
 /// Payloads within the same field may be processed together by the codec.
@@ -31,10 +32,12 @@ pub enum PayloadFieldData<'a> {
 }
 
 /// Async visitor for transforming payload fields.
+///
+/// Takes `&self` because several fields of one message may be visited at once.
 pub trait AsyncPayloadVisitor {
     /// Visit a payload field, potentially transforming it. Returning an error stops traversal.
     fn visit<'a>(
-        &'a mut self,
+        &'a self,
         field: PayloadField<'a>,
     ) -> BoxFuture<'a, Result<(), PayloadConversionError>>;
 }
@@ -42,13 +45,24 @@ pub trait AsyncPayloadVisitor {
 /// Trait for messages that contain Payload fields (directly or transitively).
 /// Generated via codegen for all relevant proto message types.
 pub trait PayloadVisitable: Send {
-    /// Visit all payload fields in this message.
+    /// Append every payload field in this message, in traversal order.
+    fn payload_fields_mut<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>);
+
+    /// Visit all payload fields in this message, running at most `concurrency` visits at once.
     /// The visitor is called once per field, receiving the field's payload(s).
     /// Traversal stops and returns the first visitor error.
     fn visit_payloads_mut<'a>(
         &'a mut self,
-        visitor: &'a mut (dyn AsyncPayloadVisitor + Send),
-    ) -> BoxFuture<'a, Result<(), PayloadConversionError>>;
+        visitor: &'a (dyn AsyncPayloadVisitor + Sync),
+        concurrency: NonZeroUsize,
+    ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
+        let mut fields = Vec::new();
+        self.payload_fields_mut(&mut fields);
+        stream::iter(fields)
+            .map(Ok::<_, PayloadConversionError>)
+            .try_for_each_concurrent(concurrency.get(), |field| visitor.visit(field))
+            .boxed()
+    }
 }
 
 /// Check if a field path represents search attributes that must not be transformed.
@@ -70,7 +84,7 @@ macro_rules! payload_visitor {
     ($visitor:ty, |$this:ident, $payloads:ident| $body:expr) => {
         impl $crate::payload_visitor::AsyncPayloadVisitor for $visitor {
             fn visit<'a>(
-                &'a mut self,
+                &'a self,
                 field: $crate::payload_visitor::PayloadField<'a>,
             ) -> ::futures::future::BoxFuture<
                 'a,
@@ -125,57 +139,47 @@ payload_visitor!(DecodeVisitor<'_>, |this, payloads| {
     this.codec.decode(this.context, payloads).await?
 });
 
-/// Encode all payloads in a message using the given codec.
+/// Encode all payloads in a message using the given codec, running at most `concurrency` codec
+/// calls at once.
 pub async fn encode_payloads<M: PayloadVisitable + Send>(
     msg: &mut M,
     codec: &(dyn PayloadCodec + Send + Sync),
     context: &SerializationContextData,
+    concurrency: NonZeroUsize,
 ) -> Result<(), PayloadConversionError> {
-    let mut visitor = EncodeVisitor { codec, context };
-    msg.visit_payloads_mut(&mut visitor).await
+    let visitor = EncodeVisitor { codec, context };
+    msg.visit_payloads_mut(&visitor, concurrency).await
 }
 
-/// Decode all payloads in a message using the given codec.
+/// Decode all payloads in a message using the given codec, running at most `concurrency` codec
+/// calls at once.
 pub async fn decode_payloads<M: PayloadVisitable + Send>(
     msg: &mut M,
     codec: &(dyn PayloadCodec + Send + Sync),
     context: &SerializationContextData,
+    concurrency: NonZeroUsize,
 ) -> Result<(), PayloadConversionError> {
-    let mut visitor = DecodeVisitor { codec, context };
-    msg.visit_payloads_mut(&mut visitor).await
+    let visitor = DecodeVisitor { codec, context };
+    msg.visit_payloads_mut(&visitor, concurrency).await
 }
 
 // Manual impl for Payload - visits itself as a single payload
 impl PayloadVisitable for Payload {
-    fn visit_payloads_mut<'a>(
-        &'a mut self,
-        visitor: &'a mut (dyn AsyncPayloadVisitor + Send),
-    ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
-        Box::pin(async move {
-            visitor
-                .visit(PayloadField {
-                    path: "temporal.api.common.v1.Payload",
-                    data: PayloadFieldData::Single(self),
-                })
-                .await
-        })
+    fn payload_fields_mut<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>) {
+        fields.push(PayloadField {
+            path: "temporal.api.common.v1.Payload",
+            data: PayloadFieldData::Single(self),
+        });
     }
 }
 
 // Manual impl for Payloads - visits itself as a Payloads field
 impl PayloadVisitable for Payloads {
-    fn visit_payloads_mut<'a>(
-        &'a mut self,
-        visitor: &'a mut (dyn AsyncPayloadVisitor + Send),
-    ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
-        Box::pin(async move {
-            visitor
-                .visit(PayloadField {
-                    path: "temporal.api.common.v1.Payloads",
-                    data: PayloadFieldData::Payloads(self),
-                })
-                .await
-        })
+    fn payload_fields_mut<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>) {
+        fields.push(PayloadField {
+            path: "temporal.api.common.v1.Payloads",
+            data: PayloadFieldData::Payloads(self),
+        });
     }
 }
 
@@ -216,7 +220,10 @@ mod tests {
     use futures::FutureExt;
     use std::{
         collections::HashMap,
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
     use temporalio_common_wasm::{
         data_converters::{DefaultFailureConverter, FailureConverter, PayloadConverter},
@@ -297,30 +304,67 @@ mod tests {
     }
 
     struct PathRecordingVisitor {
-        visited_paths: Vec<String>,
+        visited_paths: Mutex<Vec<String>>,
     }
     impl PathRecordingVisitor {
         fn new() -> Self {
             Self {
-                visited_paths: Vec::new(),
+                visited_paths: Mutex::new(Vec::new()),
             }
         }
 
         fn paths(&self) -> Vec<String> {
-            self.visited_paths.clone()
+            self.visited_paths.lock().unwrap().clone()
         }
     }
 
     impl AsyncPayloadVisitor for PathRecordingVisitor {
         fn visit<'a>(
-            &'a mut self,
+            &'a self,
             field: PayloadField<'a>,
         ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
             let path = field.path.to_string();
-            self.visited_paths.push(path);
+            self.visited_paths.lock().unwrap().push(path);
             async move { Ok(()) }.boxed()
         }
     }
+
+    /// Marks payloads like [`MarkingCodec`] while recording the most encodes ever in flight. Each
+    /// encode yields once, so every encode the visitor has started is in flight before any finishes.
+    #[derive(Default)]
+    struct InFlightCodec {
+        in_flight: Arc<AtomicUsize>,
+        max_in_flight: Arc<AtomicUsize>,
+    }
+    impl PayloadCodec for InFlightCodec {
+        fn encode(
+            &self,
+            context: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Result<Vec<Payload>, PayloadConversionError>> {
+            let in_flight = Arc::clone(&self.in_flight);
+            let max_in_flight = Arc::clone(&self.max_in_flight);
+            let marked = MarkingCodec.encode(context, payloads);
+            async move {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                max_in_flight.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                marked.await
+            }
+            .boxed()
+        }
+
+        fn decode(
+            &self,
+            _: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Result<Vec<Payload>, PayloadConversionError>> {
+            async move { Ok(payloads) }.boxed()
+        }
+    }
+
+    const ONE: NonZeroUsize = NonZeroUsize::MIN;
 
     fn make_payload(data: &str) -> Payload {
         Payload {
@@ -364,8 +408,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut visitor = PathRecordingVisitor::new();
-        activation.visit_payloads_mut(&mut visitor).await.unwrap();
+        let visitor = PathRecordingVisitor::new();
+        activation.visit_payloads_mut(&visitor, ONE).await.unwrap();
 
         let paths = visitor.paths();
         assert!(
@@ -419,6 +463,7 @@ mod tests {
             &mut completion,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -463,6 +508,7 @@ mod tests {
             &mut activation,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -502,6 +548,7 @@ mod tests {
             &mut activation,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -601,6 +648,7 @@ mod tests {
             &mut completion,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -679,6 +727,7 @@ mod tests {
             &mut response,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -709,6 +758,7 @@ mod tests {
             &mut payload,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -724,6 +774,7 @@ mod tests {
             &mut payload,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -741,6 +792,7 @@ mod tests {
             &mut payloads,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -771,6 +823,7 @@ mod tests {
             &mut activation,
             &codec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap_err();
@@ -797,6 +850,7 @@ mod tests {
             &mut failure,
             &MarkingCodec,
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            ONE,
         )
         .await
         .unwrap();
@@ -805,5 +859,46 @@ mod tests {
             panic!("expected application failure info")
         };
         assert!(is_encoded(&info.details.unwrap().payloads[0]));
+    }
+
+    #[tokio::test]
+    async fn fields_are_visited_concurrently_up_to_the_limit() {
+        for limit in [1, 3] {
+            let mut completion = WorkflowActivationCompletion::from_cmds(
+                "run",
+                (0..5)
+                    .map(|i| {
+                        CmdVariant::ScheduleActivity(ScheduleActivity {
+                            seq: i,
+                            arguments: vec![make_payload(&format!("arg-{i}"))],
+                            ..Default::default()
+                        })
+                    })
+                    .collect(),
+            );
+            let codec = InFlightCodec::default();
+
+            encode_payloads(
+                &mut completion,
+                &codec,
+                &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                NonZeroUsize::new(limit).unwrap(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(codec.max_in_flight.load(Ordering::SeqCst), limit);
+            let Some(Status::Successful(success)) = completion.status else {
+                panic!("expected successful status")
+            };
+            // Visits finish out of order, so each result must still land in its own command.
+            for (i, cmd) in success.commands.iter().enumerate() {
+                let Some(CmdVariant::ScheduleActivity(schedule)) = &cmd.variant else {
+                    panic!("expected ScheduleActivity")
+                };
+                assert!(is_encoded(&schedule.arguments[0]));
+                assert_eq!(schedule.arguments[0].data, format!("arg-{i}").into_bytes());
+            }
+        }
     }
 }

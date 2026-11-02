@@ -386,14 +386,11 @@ impl PayloadVisitorGenerator {
         format!(
             r#"#[allow(deprecated, clippy::single_match, clippy::collapsible_match)]
 impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
-    fn visit_payloads_mut<'a>(
+    fn payload_fields_mut<'a>(
         &'a mut self,
-        visitor: &'a mut (dyn crate::payload_visitor::AsyncPayloadVisitor + Send),
-    ) -> futures::future::BoxFuture<'a, Result<(), crate::data_converters::PayloadConversionError>> {{
-        Box::pin(async move {{
-{impl_body}            Ok(())
-        }})
-    }}
+        fields: &mut Vec<crate::payload_visitor::PayloadField<'a>>,
+    ) {{
+{impl_body}    }}
 }}
 "#,
             rust_path = rust_path,
@@ -413,10 +410,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::SinglePayload => {
                 format!(
                     r#"        if let Some(payload) = &mut self.{field} {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Single(payload),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -425,10 +422,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             }
             PayloadFieldKind::RepeatedPayload => {
                 format!(
-                    r#"        visitor.visit(crate::payload_visitor::PayloadField {{
+                    r#"        fields.push(crate::payload_visitor::PayloadField {{
             path: "{path}",
             data: crate::payload_visitor::PayloadFieldData::Repeated(&mut self.{field}),
-        }}).await?;
+        }});
 "#,
                     field = rust_field,
                     path = proto_path
@@ -437,10 +434,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::PayloadsMessage => {
                 format!(
                     r#"        if let Some(payloads) = &mut self.{field} {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Payloads(payloads),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -450,10 +447,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::MapPayload => {
                 format!(
                     r#"        for payload in self.{field}.values_mut() {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Single(payload),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -463,7 +460,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::MapNestedMessage => {
                 format!(
                     r#"        for item in self.{field}.values_mut() {{
-            item.visit_payloads_mut(visitor).await?;
+            item.payload_fields_mut(fields);
         }}
 "#,
                     field = rust_field
@@ -483,7 +480,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 if is_field_repeated {
                     format!(
                         r#"        for item in &mut self.{field} {{
-            item.visit_payloads_mut(visitor).await?;
+            item.payload_fields_mut(fields);
         }}
 "#,
                         field = rust_field
@@ -491,7 +488,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 } else {
                     format!(
                         r#"        if let Some(msg) = &mut self.{field} {{
-            msg.visit_payloads_mut(visitor).await?;
+            msg.payload_fields_mut(fields);
         }}
 "#,
                         field = rust_field
@@ -515,7 +512,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 for variant in variants {
                     let variant_name = to_pascal_case(&variant.name);
                     arms.push_str(&format!(
-                        "                {enum_path}::{variant}(msg) => msg.visit_payloads_mut(visitor).await?,\n",
+                        "                {enum_path}::{variant}(msg) => msg.payload_fields_mut(fields),\n",
                         enum_path = enum_path,
                         variant = variant_name
                     ));

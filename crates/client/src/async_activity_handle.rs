@@ -6,6 +6,7 @@ use crate::{
     errors::AsyncActivityError, grpc::WorkflowService, interceptors,
 };
 use futures_util::future::BoxFuture;
+use std::num::NonZeroUsize;
 use temporalio_common::{
     data_converters::{
         ActivitySerializationContext, SerializationContext, SerializationContextData,
@@ -260,6 +261,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                             &mut failure,
                             data_converter.codec(),
                             &SerializationContextData::Activity(ActivitySerializationContext::new()),
+                            NonZeroUsize::MIN,
                         )
                         .await?;
                         let last_heartbeat_details =

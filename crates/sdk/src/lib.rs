@@ -139,6 +139,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter},
     future::Future,
+    num::NonZeroUsize,
     sync::Arc,
     time::Duration,
 };
@@ -151,7 +152,10 @@ use temporalio_common::{
         ActivitySerializationContext, DataConverter, SerializationContext,
         SerializationContextData, WorkflowSerializationContext,
     },
-    external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
+    external_storage::{
+        StoreTarget, retrieve_external_payloads, retrieve_external_payloads_concurrently,
+        store_external_payloads, store_external_payloads_concurrently,
+    },
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
@@ -317,6 +321,12 @@ pub struct WorkerOptions {
     /// channels, etc.) will have their tasks failed with a descriptive error.
     #[builder(default = true)]
     pub detect_nondeterministic_futures: bool,
+    /// Maximum number of payload fields within one workflow activation or completion that may be
+    /// encoded, decoded, or moved to and from external storage at once. Raising it speeds up a
+    /// codec or storage driver that does I/O. Defaults to 1, processing fields one at a time.
+    /// NOTE: Experimental
+    #[builder(default = NonZeroUsize::MIN)]
+    pub max_workflow_task_payload_concurrency: NonZeroUsize,
     /// If set true, the worker will not proactively fail workflow/activity tasks whose payloads
     /// exceed the namespace error limits; oversized payloads are sent to server, which enforces the
     /// limit. Defaults to false.
@@ -821,6 +831,7 @@ struct WorkflowHalf {
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
     detect_nondeterministic_futures: bool,
+    payload_concurrency: NonZeroUsize,
     #[debug(skip)]
     patch_activation_callback: Option<InternalPatchActivationCallback>,
 }
@@ -987,6 +998,7 @@ async fn encode_workflow_completion(
     completion: &mut WorkflowActivationCompletion,
     data_converter: &DataConverter,
     run: Option<&RunStoreTargets>,
+    concurrency: NonZeroUsize,
 ) {
     let run_id = completion.run_id.clone();
     let encoded = async {
@@ -994,18 +1006,26 @@ async fn encode_workflow_completion(
             completion,
             data_converter.codec(),
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            concurrency,
         )
         .await?;
         match &mut completion.status {
             Some(workflow_activation_completion::Status::Successful(success)) => {
                 for command in &mut success.commands {
                     let target = run.and_then(|run| run.for_command(command));
-                    store_external_payloads(command, data_converter, target).await?;
+                    store_external_payloads_concurrently(
+                        command,
+                        data_converter,
+                        target,
+                        concurrency,
+                    )
+                    .await?;
                 }
             }
             Some(workflow_activation_completion::Status::Failed(failed)) => {
                 let target = run.map(RunStoreTargets::current);
-                store_external_payloads(failed, data_converter, target).await?;
+                store_external_payloads_concurrently(failed, data_converter, target, concurrency)
+                    .await?;
             }
             None => {}
         }
@@ -1035,6 +1055,7 @@ async fn encode_activity_completion(
             completion,
             data_converter.codec(),
             &SerializationContextData::Activity(ActivitySerializationContext::new()),
+            NonZeroUsize::MIN,
         )
         .await?;
         store_external_payloads(completion, data_converter, target).await?;
@@ -1130,6 +1151,7 @@ impl Worker {
             workflow_interceptor_constructors,
         );
         me.workflow_half.detect_nondeterministic_futures = options.detect_nondeterministic_futures;
+        me.workflow_half.payload_concurrency = options.max_workflow_task_payload_concurrency;
         #[cfg(feature = "experimental")]
         {
             me.workflow_half.patch_activation_callback = options.patch_activation_callback;
@@ -1170,6 +1192,7 @@ impl Worker {
                 workflow_definitions: workflows,
                 workflow_removed_from_map: Default::default(),
                 detect_nondeterministic_futures: false,
+                payload_concurrency: NonZeroUsize::MIN,
                 patch_activation_callback: None,
             },
             activity_half: ActivityHalf {
@@ -1266,6 +1289,7 @@ impl Worker {
             .map_err(WorkerRunError::Validation)?;
         let shutdown_token = CancellationToken::new();
         let (common, wf_half, act_half) = self.split_apart();
+        let payload_concurrency = wf_half.payload_concurrency;
         let (wf_future_tx, wf_future_rx) =
             unbounded_channel::<WorkflowFutureHandle<TaskHandle<WorkflowResult<Payload>>>>();
         let (completions_tx, completions_rx) = unbounded_channel();
@@ -1326,6 +1350,7 @@ impl Worker {
                             &mut completion,
                             &common.data_converter,
                             run.as_deref(),
+                            payload_concurrency,
                         )
                         .await;
                         for i in &common.worker_interceptors {
@@ -1359,12 +1384,17 @@ impl Worker {
                                     })?,
                                 };
                             let decoded = async {
-                                retrieve_external_payloads(&mut activation, &common.data_converter)
-                                    .await?;
+                                retrieve_external_payloads_concurrently(
+                                    &mut activation,
+                                    &common.data_converter,
+                                    payload_concurrency,
+                                )
+                                .await?;
                                 decode_payloads(
                                     &mut activation,
                                     common.data_converter.codec(),
                                     &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                                    payload_concurrency,
                                 )
                                 .await?;
                                 Ok::<_, anyhow::Error>(())
@@ -1481,6 +1511,7 @@ impl Worker {
                                 &SerializationContextData::Activity(
                                     ActivitySerializationContext::new(),
                                 ),
+                                NonZeroUsize::MIN,
                             )
                             .await?;
                             Ok::<_, anyhow::Error>(())
@@ -2266,7 +2297,7 @@ mod tests {
             }),
         );
 
-        encode_workflow_completion(&mut completion, &data_converter, None).await;
+        encode_workflow_completion(&mut completion, &data_converter, None, NonZeroUsize::MIN).await;
 
         let Some(workflow_activation_completion::Status::Failed(failed)) = completion.status else {
             panic!("expected failed workflow completion")

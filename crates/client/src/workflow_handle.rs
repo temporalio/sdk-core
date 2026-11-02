@@ -18,6 +18,7 @@ use std::{
     collections::VecDeque,
     fmt::Debug,
     marker::PhantomData,
+    num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -187,6 +188,7 @@ impl WorkflowExecutionDescription {
             &mut raw_description,
             data_converter.codec(),
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+            NonZeroUsize::MIN,
         )
         .await?;
         let decoded_metadata = decode_user_metadata(
@@ -701,6 +703,7 @@ where
                         &mut failure,
                         dc.codec(),
                         &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                        NonZeroUsize::MIN,
                     )
                     .await?;
                     let error = dc.failure_converter().to_error(

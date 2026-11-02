@@ -10,7 +10,11 @@
 // them is needed in every build.
 #![cfg_attr(not(feature = "experimental"), allow(dead_code))]
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use crate::{
     data_converters::ExternalStorageError,
@@ -45,23 +49,28 @@ pub(crate) fn is_plain_reference(payload: &Payload) -> bool {
 pub(crate) async fn reject_references_in<M: PayloadVisitable + Send>(
     message: &mut M,
 ) -> Result<(), ExternalStorageError> {
-    let mut finder = ReferenceFinder { found: false };
+    let finder = ReferenceFinder {
+        found: AtomicBool::new(false),
+    };
+    // Finding a reference is not I/O, so visiting fields concurrently would not help.
     message
-        .visit_payloads_mut(&mut finder)
+        .visit_payloads_mut(&finder, NonZeroUsize::MIN)
         .await
         .map_err(|e| ExternalStorageError::Walk(Box::new(e)))?;
-    if finder.found {
+    if finder.found.into_inner() {
         return Err(ExternalStorageError::NotConfigured);
     }
     Ok(())
 }
 
 struct ReferenceFinder {
-    found: bool,
+    found: AtomicBool,
 }
 
 payload_visitor!(ReferenceFinder, |this, payloads| {
-    this.found |= payloads.iter().any(is_plain_reference);
+    if payloads.iter().any(is_plain_reference) {
+        this.found.store(true, Ordering::Relaxed);
+    }
     payloads
 });
 

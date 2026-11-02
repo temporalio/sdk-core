@@ -8,6 +8,7 @@ use crate::{
 use futures_util::{FutureExt, future::BoxFuture, stream};
 use std::{
     collections::VecDeque,
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -1121,6 +1122,7 @@ where
                 memo,
                 self.client.data_converter().codec(),
                 &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                NonZeroUsize::MIN,
             )
             .await?;
         }
@@ -1178,6 +1180,7 @@ where
                             &mut response,
                             handle.client.data_converter().codec(),
                             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                            NonZeroUsize::MIN,
                         )
                         .await?;
                         let description = ScheduleDescription::new(
@@ -1656,6 +1659,7 @@ where
                                     &SerializationContextData::Workflow(
                                         WorkflowSerializationContext::new(),
                                     ),
+                                    NonZeroUsize::MIN,
                                 )
                                 .await
                             {

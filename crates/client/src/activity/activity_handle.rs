@@ -4,7 +4,7 @@ use crate::{
     errors::{ActivityInteractionError, ActivityResultError},
     grpc::WorkflowService,
 };
-use std::marker::PhantomData;
+use std::{marker::PhantomData, num::NonZeroUsize};
 use temporalio_common::{
     ActivityDefinition,
     data_converters::{
@@ -110,7 +110,7 @@ where
                     Ok(dc.from_payloads(&ctx, payloads.payloads).await?)
                 }
                 activity_execution_outcome::Value::Failure(mut failure) => {
-                    decode_payloads(&mut failure, dc.codec(), &ctx).await?;
+                    decode_payloads(&mut failure, dc.codec(), &ctx, NonZeroUsize::MIN).await?;
                     Err(match failure.failure_info {
                         Some(FailureInfo::CanceledFailureInfo(info)) => {
                             let payloads = info.details.unwrap_or_default().payloads;
@@ -312,9 +312,14 @@ mod tests {
                 ApplicationFailure::new(anyhow::anyhow!("private message")),
             ))),
         );
-        encode_payloads(&mut failure, data_converter.codec(), &context)
-            .await
-            .unwrap();
+        encode_payloads(
+            &mut failure,
+            data_converter.codec(),
+            &context,
+            NonZeroUsize::MIN,
+        )
+        .await
+        .unwrap();
         MockActivityClient {
             data_converter,
             failure,

@@ -13,6 +13,7 @@ use crate::{
     data_converters::{DataConverter, PayloadConversionError},
     payload_visitor::PayloadVisitable,
 };
+use std::num::NonZeroUsize;
 
 mod references;
 #[cfg(feature = "experimental")]
@@ -29,15 +30,26 @@ pub async fn store_external_payloads<M: PayloadVisitable + Send>(
     data_converter: &DataConverter,
     target: Option<StoreTarget>,
 ) -> Result<(), PayloadConversionError> {
+    store_external_payloads_concurrently(msg, data_converter, target, NonZeroUsize::MIN).await
+}
+
+/// Like [`store_external_payloads`], but stores up to `concurrency` payload fields at once.
+pub async fn store_external_payloads_concurrently<M: PayloadVisitable + Send>(
+    msg: &mut M,
+    data_converter: &DataConverter,
+    target: Option<StoreTarget>,
+    concurrency: NonZeroUsize,
+) -> Result<(), PayloadConversionError> {
     #[cfg(feature = "experimental")]
     runner::store_in(
         data_converter.external_storage(),
         msg,
         target.as_ref().map(|t| &t.info),
+        concurrency,
     )
     .await?;
     #[cfg(not(feature = "experimental"))]
-    let _ = (msg, data_converter, target);
+    let _ = (msg, data_converter, target, concurrency);
     Ok(())
 }
 
@@ -126,11 +138,20 @@ pub async fn retrieve_external_payloads<M: PayloadVisitable + Send>(
     msg: &mut M,
     data_converter: &DataConverter,
 ) -> Result<(), PayloadConversionError> {
+    retrieve_external_payloads_concurrently(msg, data_converter, NonZeroUsize::MIN).await
+}
+
+/// Like [`retrieve_external_payloads`], but retrieves up to `concurrency` payload fields at once.
+pub async fn retrieve_external_payloads_concurrently<M: PayloadVisitable + Send>(
+    msg: &mut M,
+    data_converter: &DataConverter,
+    concurrency: NonZeroUsize,
+) -> Result<(), PayloadConversionError> {
     #[cfg(feature = "experimental")]
-    runner::retrieve_in(data_converter.external_storage(), msg).await?;
+    runner::retrieve_in(data_converter.external_storage(), msg, concurrency).await?;
     #[cfg(not(feature = "experimental"))]
     {
-        let _ = data_converter;
+        let _ = (data_converter, concurrency);
         references::reject_references_in(msg).await?;
     }
     Ok(())

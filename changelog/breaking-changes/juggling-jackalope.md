@@ -1,0 +1,1 @@
+`AsyncPayloadVisitor::visit` now takes `&self` so fields can be visited concurrently, `PayloadVisitable` implementors provide `payload_fields_mut` instead of `visit_payloads_mut`, and `visit_payloads_mut`, `encode_payloads`, and `decode_payloads` take a concurrency limit.

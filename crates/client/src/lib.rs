@@ -125,6 +125,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     fmt::Debug,
+    num::NonZeroUsize,
     pin::Pin,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -2427,6 +2428,7 @@ where
                                         &SerializationContextData::Workflow(
                                             WorkflowSerializationContext::new(),
                                         ),
+                                        NonZeroUsize::MIN,
                                     )
                                     .await
                                 {
@@ -3767,6 +3769,7 @@ mod tests {
                 &mut sent,
                 &XorCodec,
                 &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                NonZeroUsize::MIN,
             )
             .await
             .unwrap();

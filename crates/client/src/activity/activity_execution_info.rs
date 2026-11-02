@@ -2,6 +2,7 @@ use crate::Priority;
 use std::{
     error::Error,
     marker::PhantomData,
+    num::NonZeroUsize,
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
@@ -199,12 +200,24 @@ where
         };
         if let Some(failure) = raw_info.last_failure.as_mut() {
             retrieve_external_payloads(failure, &data_converter).await?;
-            decode_payloads(failure, data_converter.codec(), &serialization_context).await?;
+            decode_payloads(
+                failure,
+                data_converter.codec(),
+                &serialization_context,
+                NonZeroUsize::MIN,
+            )
+            .await?;
         }
         let mut raw_outcome = response.outcome.and_then(|o| o.value);
         if let Some(ActivityExecutionOutcomeValue::Failure(failure)) = raw_outcome.as_mut() {
             retrieve_external_payloads(failure, &data_converter).await?;
-            decode_payloads(failure, data_converter.codec(), &serialization_context).await?;
+            decode_payloads(
+                failure,
+                data_converter.codec(),
+                &serialization_context,
+                NonZeroUsize::MIN,
+            )
+            .await?;
         }
         Ok(Self {
             raw_info,
