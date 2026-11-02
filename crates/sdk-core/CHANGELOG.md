@@ -53,6 +53,8 @@ relevant information.
   nondeterminism while retaining compatibility with histories recorded before these checks.
 
 ### Fixed
+* Ephemeral dev and test servers now reserve automatically selected ports on macOS, preventing
+  intermittent address-in-use errors when other processes allocate ports concurrently.
 * Resource-based worker tuners now read CPU usage and quotas from standard cgroup v1 mounts. Workers
   on cgroup v1 systems no longer fall back to host CPU usage and admit work based on understated
   container load.
