@@ -30,8 +30,9 @@
 //! The plugin also propagates context through Continue-as-New.
 //!
 //! Client tracing headers can opt into the configured client's codec with
-//! [`OpenTelemetryPluginBuilder::encode_client_headers`]. Only this plugin's tracing carrier is
-//! encoded; user-provided client headers are unchanged. Workflow header codecs are unchanged.
+//! [`crate::opentelemetry::OpenTelemetryPluginBuilder::encode_client_headers`]. Only this plugin's
+//! tracing carrier is encoded; user-provided client headers are unchanged. Workflow header codecs
+//! are unchanged.
 //!
 //! During replay, the plugin does not export Workflow spans. Use
 //! [`crate::opentelemetry::WorkflowIdGenerator`] in the tracer provider for Workflow spans. If
