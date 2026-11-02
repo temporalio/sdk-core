@@ -31,7 +31,7 @@
 //!
 //! Client tracing headers can opt into the configured client's codec with
 //! [`OpenTelemetryPluginBuilder::encode_client_headers`]. Only this plugin's tracing carrier is
-//! encoded; other client headers remain wire-ready. Workflow header codecs are unchanged.
+//! encoded; user-provided client headers are unchanged. Workflow header codecs are unchanged.
 //!
 //! During replay, the plugin does not export Workflow spans. Use
 //! [`crate::opentelemetry::WorkflowIdGenerator`] in the tracer provider for Workflow spans. If
@@ -367,7 +367,7 @@ impl Default for OpenTelemetryPluginBuilder {
 impl OpenTelemetryPluginBuilder {
     /// Apply the configured client's codec only to tracing headers produced by this plugin.
     ///
-    /// Defaults to false. Other client headers remain wire-ready, and workflow header processing
+    /// Defaults to false. User-provided client headers are unchanged, and workflow header processing
     /// is unchanged. Register this plugin after plugins that configure the client's data converter.
     pub fn encode_client_headers(mut self, enabled: bool) -> Self {
         self.encode_client_headers = enabled;
