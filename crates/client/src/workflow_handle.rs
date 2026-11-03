@@ -71,11 +71,11 @@ struct DecodedUserMetadata {
 }
 
 fn decode_user_metadata(
+    payload_converter: &PayloadConverter,
     context: &SerializationContextData,
     user_metadata: Option<UserMetadata>,
 ) -> Result<DecodedUserMetadata, PayloadConversionError> {
-    let payload_converter = PayloadConverter::default();
-    let context = SerializationContext::new(context, &payload_converter);
+    let context = SerializationContext::new(context, payload_converter);
     let (summary, details) = user_metadata
         .map(|metadata| (metadata.summary, metadata.details))
         .unwrap_or_default();
@@ -179,17 +179,18 @@ impl WorkflowExecutionDescription {
         mut raw_description: DescribeWorkflowExecutionResponse,
         data_converter: &DataConverter,
     ) -> Result<Self, PayloadConversionError> {
-        let raw_user_metadata = raw_description
-            .execution_config
-            .as_ref()
-            .and_then(|cfg| cfg.user_metadata.clone());
         decode_payloads(
             &mut raw_description,
             data_converter.codec(),
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
         )
         .await?;
+        let raw_user_metadata = raw_description
+            .execution_config
+            .as_ref()
+            .and_then(|cfg| cfg.user_metadata.clone());
         let decoded_metadata = decode_user_metadata(
+            data_converter.payload_converter(),
             &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
             raw_user_metadata,
         )?;
@@ -1534,18 +1535,21 @@ mod tests {
     };
     use temporalio_common::{
         data_converters::DefaultFailureConverter,
-        protos::temporal::api::{
-            common::v1::{Memo, SearchAttributes, WorkflowExecution},
-            enums::v1::{
-                UpdateWorkflowExecutionLifecycleStage as UpdateStage,
-                WorkflowExecutionStatus as ProtoWorkflowExecutionStatus,
-            },
-            history::v1::WorkflowExecutionStartedEventAttributes,
-            sdk::v1::UserMetadata,
-            update::v1::UpdateRef,
-            workflow::v1::WorkflowExecutionConfig,
-            workflowservice::v1::{
-                GetWorkflowExecutionHistoryResponse, UpdateWorkflowExecutionResponse,
+        protos::{
+            coresdk::AsJsonPayloadExt,
+            temporal::api::{
+                common::v1::{Memo, SearchAttributes, WorkflowExecution},
+                enums::v1::{
+                    UpdateWorkflowExecutionLifecycleStage as UpdateStage,
+                    WorkflowExecutionStatus as ProtoWorkflowExecutionStatus,
+                },
+                history::v1::WorkflowExecutionStartedEventAttributes,
+                sdk::v1::UserMetadata,
+                update::v1::UpdateRef,
+                workflow::v1::WorkflowExecutionConfig,
+                workflowservice::v1::{
+                    GetWorkflowExecutionHistoryResponse, UpdateWorkflowExecutionResponse,
+                },
             },
         },
     };
@@ -1788,6 +1792,41 @@ mod tests {
             memo.get::<String>("memo-key").unwrap(),
             Some("memo-value".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_description_user_metadata_uses_codec() {
+        let converter = DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter::default(),
+            XorCodec,
+        );
+        // Built by hand, not with `converter`, to match what another SDK with this codec stores.
+        let xor_encoded_json = |text: &str| {
+            let mut payload = text.as_json_payload().unwrap();
+            payload.data.iter_mut().for_each(|byte| *byte ^= 0x42);
+            payload
+        };
+        let summary = xor_encoded_json("workflow summary");
+        let details = xor_encoded_json("workflow details");
+        let description = WorkflowExecutionDescription::new(
+            DescribeWorkflowExecutionResponse {
+                execution_config: Some(WorkflowExecutionConfig {
+                    user_metadata: Some(UserMetadata {
+                        summary: Some(summary),
+                        details: Some(details),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            &converter,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(description.static_summary(), Some("workflow summary"));
+        assert_eq!(description.static_details(), Some("workflow details"));
     }
 
     #[tokio::test]
