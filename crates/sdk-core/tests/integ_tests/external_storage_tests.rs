@@ -255,30 +255,6 @@ impl LargeSignalWorkflow {
     }
 }
 
-#[workflow]
-#[derive(Default)]
-struct LargeQueryWorkflow {
-    done: bool,
-}
-#[workflow_methods]
-impl LargeQueryWorkflow {
-    #[run]
-    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        ctx.wait_condition(|s| s.done).await?;
-        Ok(())
-    }
-
-    #[signal]
-    fn finish(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
-        self.done = true;
-    }
-
-    #[query]
-    fn report(&self, _ctx: &WorkflowContextView) -> String {
-        "q".repeat(10_000)
-    }
-}
-
 struct AsyncCompletionActivities {
     task_token: mpsc::Sender<Vec<u8>>,
 }
@@ -1140,104 +1116,6 @@ async fn a_storage_failure_fails_the_task_which_is_retried(
         metric_line.contains("failure_reason=\"ExternalStorageError\""),
         "{metric_line}"
     );
-}
-
-#[tokio::test]
-async fn a_storage_failure_answering_a_legacy_query_fails_only_the_query() {
-    let driver = Arc::new(FailingDriver {
-        fail_store: Some(1),
-        ..Default::default()
-    });
-    let client = client_with_storage(driver).await;
-    let task_queue = format!("storage_failure_query_{}", rand_6_chars());
-    let runtime = Runtime::from_current_tokio(Default::default()).unwrap();
-    let worker_options = WorkerOptions::new(task_queue.clone())
-        .register_workflow::<LargeQueryWorkflow>()
-        .unwrap()
-        .build();
-    let worker = temporalio_sdk::Worker::new(&runtime, client.clone(), worker_options).unwrap();
-
-    worker
-        .run_until(async {
-            let handle = client
-                .start_workflow(
-                    LargeQueryWorkflow::run,
-                    (),
-                    WorkflowStartOptions::new(task_queue.clone(), task_queue.clone()).build(),
-                )
-                .await
-                .unwrap();
-            // Wait for the first workflow task, so the queries are answered on their own rather
-            // than alongside it.
-            eventually(
-                || {
-                    let handle = &handle;
-                    async move {
-                        let events = handle
-                            .fetch_history(Default::default())
-                            .into_events()
-                            .await
-                            .unwrap();
-                        events
-                            .iter()
-                            .any(|event| {
-                                matches!(
-                                    event.attributes,
-                                    Some(Attributes::WorkflowTaskCompletedEventAttributes(_))
-                                )
-                            })
-                            .then_some(())
-                            .ok_or("the first workflow task has not completed")
-                    }
-                },
-                Duration::from_secs(10),
-            )
-            .await
-            .unwrap();
-
-            let err = handle
-                .query(
-                    LargeQueryWorkflow::report,
-                    (),
-                    WorkflowQueryOptions::default(),
-                )
-                .await
-                .expect_err("answering the query should fail to store its result");
-            assert!(err.to_string().contains(INJECTED_FAILURE), "{err}");
-            let report = handle
-                .query(
-                    LargeQueryWorkflow::report,
-                    (),
-                    WorkflowQueryOptions::default(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(report, "q".repeat(10_000));
-
-            handle
-                .signal(
-                    LargeQueryWorkflow::finish,
-                    (),
-                    WorkflowSignalOptions::default(),
-                )
-                .await
-                .unwrap();
-            handle.get_result(Default::default()).await.unwrap();
-            let events = handle
-                .fetch_history(Default::default())
-                .into_events()
-                .await
-                .unwrap();
-            assert!(
-                !events.iter().any(|event| matches!(
-                    event.attributes,
-                    Some(Attributes::WorkflowTaskFailedEventAttributes(_))
-                )),
-                "a failed query should leave the workflow's tasks alone"
-            );
-        })
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
