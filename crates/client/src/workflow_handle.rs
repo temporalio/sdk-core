@@ -30,7 +30,8 @@ use temporalio_common::{
         WorkflowSerializationContext,
     },
     error::IncomingError,
-    payload_visitor::{decode_payloads, retrieve_external_payloads},
+    external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
+    payload_visitor::decode_payloads,
     protos::{
         coresdk::FromPayloadsExt,
         proto_ts_to_system_time,
@@ -810,8 +811,17 @@ where
                                 .unwrap_or_else(|| Uuid::new_v4().to_string()),
                             header: options.header,
                             ..Default::default()
-                        }
-                        .into_request();
+                        };
+                        let target = request.workflow_execution.as_ref().map(|execution| {
+                            StoreTarget::workflow(
+                                &request.namespace,
+                                &execution.workflow_id,
+                                &execution.run_id,
+                                "",
+                            )
+                        });
+                        store_external_payloads(&mut request, &data_converter, target).await?;
+                        let mut request = request.into_request();
                         options.rpc_options.apply_to(&mut request);
                         WorkflowService::signal_workflow_execution(&mut client, request)
                             .await
@@ -883,8 +893,17 @@ where
                                 .reject_condition
                                 .map(|condition| ProtoQueryRejectCondition::from(condition) as i32)
                                 .unwrap_or(ProtoQueryRejectCondition::None as i32),
-                        }
-                        .into_request();
+                        };
+                        let target = request.execution.as_ref().map(|execution| {
+                            StoreTarget::workflow(
+                                &request.namespace,
+                                &execution.workflow_id,
+                                &execution.run_id,
+                                "",
+                            )
+                        });
+                        store_external_payloads(&mut request, &data_converter, target).await?;
+                        let mut request = request.into_request();
                         options.rpc_options.apply_to(&mut request);
                         let mut response = client
                             .query_workflow(request)
@@ -994,7 +1013,7 @@ where
                             let update_id = options
                                 .update_id
                                 .unwrap_or_else(|| Uuid::new_v4().to_string());
-                            let request = build_update_workflow_request(
+                            let mut request = build_update_workflow_request(
                                 client.namespace(),
                                 client.identity(),
                                 workflow_id.clone(),
@@ -1004,6 +1023,15 @@ where
                                 options.header,
                                 payloads,
                             );
+                            let target = request.workflow_execution.as_ref().map(|execution| {
+                                StoreTarget::workflow(
+                                    &request.namespace,
+                                    &execution.workflow_id,
+                                    &execution.run_id,
+                                    "",
+                                )
+                            });
+                            store_external_payloads(&mut request, &data_converter, target).await?;
                             let mut response = loop {
                                 let mut rpc_request = request.clone().into_request();
                                 options.rpc_options.apply_to(&mut rpc_request);
@@ -1163,8 +1191,18 @@ where
                             identity: client.identity(),
                             first_execution_run_id: input.first_execution_run_id,
                             links: vec![],
-                        }
-                        .into_request();
+                        };
+                        let target = request.workflow_execution.as_ref().map(|execution| {
+                            StoreTarget::workflow(
+                                &request.namespace,
+                                &execution.workflow_id,
+                                &execution.run_id,
+                                "",
+                            )
+                        });
+                        store_external_payloads(&mut request, client.data_converter(), target)
+                            .await?;
+                        let mut request = request.into_request();
                         input.options.rpc_options.apply_to(&mut request);
                         WorkflowService::terminate_workflow_execution(&mut client, request)
                             .await

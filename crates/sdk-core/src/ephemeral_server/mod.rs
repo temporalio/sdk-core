@@ -575,13 +575,10 @@ fn get_free_port(bind_ip: &str) -> io::Result<u16> {
     // that port number for bind(:0) syscalls, yet we are not prevented from
     // explicitly binding to it (thanks to SO_REUSEADDR).
     //
-    // On macOS and Windows, the above technique is not necessary, as the OS
-    // allocates ephemeral ports sequentially, meaning a port number will only
-    // be reused after the entire range has been exhausted. Quite the opposite,
-    // given that these OSes use a significantly smaller range for ephemeral
-    // ports, making an extra connection just to reserve a port might actually
-    // be harmful (by hastening ephemeral port exhaustion).
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    // Windows is excluded because SO_REUSEADDR has different semantics there.
+    // macOS allocates ephemeral ports sequentially, but a busy host can still
+    // claim the selected port before the caller binds, so reserve it there too.
+    #[cfg(not(target_os = "windows"))]
     {
         // Establish a connection to the bind_ip:port
         let _stream = std::net::TcpStream::connect(addr)?;

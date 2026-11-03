@@ -2,7 +2,7 @@
 //!
 //! Outbound, a payload at or above the configured size threshold is handed to a storage driver and
 //! replaced by a reference to what the driver stored. Inbound, references are swapped back for the
-//! payloads they point at. [`ExternalStorageRunner`] runs either direction over a whole message,
+//! payloads they point at. [`store_in`] and [`retrieve_in`] run either direction over a whole message,
 //! visiting every payload-bearing field except search attributes, which the server has to be able
 //! to read.
 //!
@@ -10,25 +10,74 @@
 //! claim keys) is written to history unencrypted. The payload codec is not applied to references,
 //! and the configured concurrency limits are not enforced.
 
-// Crate-private until a worker or client calls it.
-#![allow(dead_code)]
-
-use futures::stream::{FuturesUnordered, TryStreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::{FuturesUnordered, TryStreamExt},
+};
 use std::{collections::HashMap, sync::Arc};
 
 use prost::Message;
 use temporalio_common_wasm::data_converters::{
-    ExternalStorage, PayloadConversionError, StorageDriver, StorageDriverClaim,
-    StorageDriverLimiter, StorageDriverRetrieveContext, StorageDriverSelectContext,
-    StorageDriverStoreContext, StorageDriverTargetInfo,
+    ExternalStorage, PayloadConversionError, StorageDriver, StorageDriverClaim, StorageDriverError,
+    StorageDriverLimiter, StorageDriverPermit, StorageDriverRetrieveContext,
+    StorageDriverSelectContext, StorageDriverStoreContext, StorageDriverTargetInfo,
 };
 
 use crate::{
     data_converters::ExternalStorageError,
-    external_storage_references::{create_reference_payload, is_plain_reference, parse_reference},
+    external_storage::references::{create_reference_payload, is_plain_reference, parse_reference},
     payload_visitor::{AsyncPayloadVisitor, PayloadVisitable, payload_visitor},
     protos::temporal::api::common::v1::Payload,
 };
+
+/// Replace every eligible payload in an outbound message with a reference. Does nothing when no
+/// external storage is configured.
+///
+/// On error the message is left partly processed and must not be used.
+pub(crate) async fn store_in<M: PayloadVisitable + Send>(
+    storage: Option<&ExternalStorage>,
+    message: &mut M,
+    target: Option<&StorageDriverTargetInfo>,
+) -> Result<(), ExternalStorageError> {
+    match storage {
+        Some(storage) => {
+            ExternalStorageRunner::new(storage)
+                .store_in(message, target)
+                .await
+        }
+        None => Ok(()),
+    }
+}
+
+/// Replace every reference in an inbound message with the payload it points at. With no external
+/// storage configured, a reference is an error rather than something to hand to application code
+/// as though it were the application's own data.
+///
+/// On error the message is left partly processed and must not be used.
+pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
+    storage: Option<&ExternalStorage>,
+    message: &mut M,
+) -> Result<(), ExternalStorageError> {
+    match storage {
+        Some(storage) => {
+            ExternalStorageRunner::new(storage)
+                .retrieve_in(message)
+                .await
+        }
+        None => crate::external_storage::references::reject_references_in(message).await,
+    }
+}
+
+struct UnboundedLimiter;
+
+impl<Item: Sync> StorageDriverLimiter<Item> for UnboundedLimiter {
+    fn acquire<'a>(
+        &'a self,
+        _item: &'a Item,
+    ) -> BoxFuture<'a, Result<StorageDriverPermit, StorageDriverError>> {
+        Box::pin(future::ready(Ok(StorageDriverPermit::new(Box::new(())))))
+    }
+}
 
 /// Drives external storage for the payloads reachable from one activation or request.
 ///
@@ -42,15 +91,11 @@ pub(crate) struct ExternalStorageRunner<'a> {
 }
 
 impl<'a> ExternalStorageRunner<'a> {
-    pub(crate) fn new(
-        storage: &'a ExternalStorage,
-        store_limiter: Arc<dyn StorageDriverLimiter<Payload>>,
-        retrieve_limiter: Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
-    ) -> Self {
+    pub(crate) fn new(storage: &'a ExternalStorage) -> Self {
         Self {
             storage,
-            store_limiter,
-            retrieve_limiter,
+            store_limiter: Arc::new(UnboundedLimiter),
+            retrieve_limiter: Arc::new(UnboundedLimiter),
         }
     }
 
@@ -286,7 +331,7 @@ async fn store_payloads(
 mod tests {
     use super::*;
     use crate::{
-        external_storage_references::create_reference_payload,
+        external_storage::references::create_reference_payload,
         protos::temporal::api::{
             common::v1::{Header, Memo, Payloads, SearchAttributes},
             workflowservice::v1::SignalWithStartWorkflowExecutionRequest,
@@ -647,7 +692,7 @@ mod tests {
 
         assert_eq!(payloads[0], small, "below the threshold, left inline");
         assert!(
-            crate::external_storage_references::is_plain_reference(&payloads[1]),
+            crate::external_storage::references::is_plain_reference(&payloads[1]),
             "only the one at the threshold was offloaded"
         );
         // What the driver was handed is byte-identical to what history would have held inline.
@@ -911,7 +956,7 @@ mod tests {
         )
         .unwrap()
         .with_payload_size_threshold(1);
-        let runner = ExternalStorageRunner::new(&storage, store_limiter(), limiter());
+        let runner = ExternalStorageRunner::new(&storage);
         let mut request = request_with_large_payloads();
         let before = request.clone();
 
@@ -930,7 +975,7 @@ mod tests {
     async fn the_runner_reports_a_driver_it_does_not_know() {
         let batches = Arc::new(Mutex::new(vec![]));
         let storage = storage("mem", Arc::clone(&batches));
-        let runner = ExternalStorageRunner::new(&storage, store_limiter(), limiter());
+        let runner = ExternalStorageRunner::new(&storage);
         // A reference to the registered driver sits beside the unknown one.
         let mut request = SignalWithStartWorkflowExecutionRequest {
             input: Some(Payloads {
@@ -1001,7 +1046,7 @@ mod tests {
         stored: Arc<Mutex<Vec<Payload>>>,
     ) {
         let storage = storage_with_threshold(1, stored);
-        let runner = ExternalStorageRunner::new(&storage, store_limiter(), limiter());
+        let runner = ExternalStorageRunner::new(&storage);
         runner.store_in(request, None).await.unwrap();
     }
 
@@ -1032,7 +1077,7 @@ mod tests {
     async fn every_other_payload_bearing_field_is_retrieved() {
         let batches = Arc::new(Mutex::new(vec![]));
         let storage = storage("mem", Arc::clone(&batches));
-        let runner = ExternalStorageRunner::new(&storage, store_limiter(), limiter());
+        let runner = ExternalStorageRunner::new(&storage);
         let mut request = request_with_references();
         let search_attributes = request.search_attributes.clone();
 
@@ -1041,7 +1086,7 @@ mod tests {
         // Search attributes are indexed literally, so they are left untouched and still reference
         // external storage afterward.
         assert_eq!(request.search_attributes, search_attributes);
-        assert!(crate::external_storage_references::is_plain_reference(
+        assert!(crate::external_storage::references::is_plain_reference(
             &request.search_attributes.as_ref().unwrap().indexed_fields["s"]
         ));
         let input = request.input.unwrap().payloads;
@@ -1056,5 +1101,16 @@ mod tests {
         let mut sizes = batches.lock().unwrap().clone();
         sizes.sort_unstable();
         assert_eq!(sizes, vec![1, 1, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn with_no_storage_configured_messages_pass_through() {
+        let mut request = request_with_large_payloads();
+        let before = request.clone();
+
+        store_in(None, &mut request, None).await.unwrap();
+        retrieve_in(None, &mut request).await.unwrap();
+
+        assert_eq!(request, before);
     }
 }
