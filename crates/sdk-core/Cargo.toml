@@ -67,7 +67,7 @@ futures-util = { version = "0.3", default-features = false }
 gethostname = "1.0.2"
 hyper = { version = "1.7", optional = true }
 itertools = "0.14"
-lru = "0.18"
+lru = "0.19"
 mockall = "0.14"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = [
