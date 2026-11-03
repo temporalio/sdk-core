@@ -7,12 +7,12 @@
 //! to read.
 //!
 //! References are stored and read in plain form, so a reference's claim data (its driver name and
-//! claim keys) is written to history unencrypted. The payload codec is not applied to references,
-//! and the configured concurrency limits are not enforced.
+//! claim keys) is written to history unencrypted. The payload codec is not applied to references.
 
 use futures::{
+    FutureExt,
     future::{self, BoxFuture},
-    stream::{FuturesUnordered, TryStreamExt},
+    stream::{self, FuturesUnordered, StreamExt, TryStreamExt},
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
@@ -124,16 +124,23 @@ impl<'a> ExternalStorageRunner<'a> {
     ) -> Result<Option<StorageOperationMetrics>, ExternalStorageError> {
         let start = Instant::now();
         let mut totals = StorageOperationTotals::default();
-        for field in transformable_fields(message) {
-            totals.add(
+        // Boxed and collected first so the stream holds no closures, without which the compiler
+        // cannot prove a caller's future is `Send`.
+        let stores: Vec<_> = transformable_fields(message)
+            .map(|field| {
                 store_payloads(
                     field.into_payloads_mut(),
                     self.storage,
                     target,
                     &self.store_limiter,
                 )
-                .await?,
-            );
+                .boxed()
+            })
+            .collect();
+        let mut stored =
+            stream::iter(stores).buffer_unordered(self.storage.max_operations_per_message());
+        while let Some(field_totals) = stored.try_next().await? {
+            totals.add(field_totals);
         }
         Ok(totals.into_metrics(start))
     }
@@ -147,15 +154,22 @@ impl<'a> ExternalStorageRunner<'a> {
     ) -> Result<Option<StorageOperationMetrics>, ExternalStorageError> {
         let start = Instant::now();
         let mut totals = StorageOperationTotals::default();
-        for field in transformable_fields(message) {
-            totals.add(
+        // Boxed and collected first so the stream holds no closures, without which the compiler
+        // cannot prove a caller's future is `Send`.
+        let retrieves: Vec<_> = transformable_fields(message)
+            .map(|field| {
                 retrieve_payloads(
                     field.into_payloads_mut(),
                     self.storage,
                     &self.retrieve_limiter,
                 )
-                .await?,
-            );
+                .boxed()
+            })
+            .collect();
+        let mut retrieved =
+            stream::iter(retrieves).buffer_unordered(self.storage.max_operations_per_message());
+        while let Some(field_totals) = retrieved.try_next().await? {
+            totals.add(field_totals);
         }
         Ok(totals.into_metrics(start))
     }
@@ -334,7 +348,13 @@ mod tests {
     };
     use anyhow::anyhow;
     use futures::future::{self, BoxFuture};
-    use std::{collections::BTreeSet, sync::Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
     use temporalio_common_wasm::data_converters::{
         StorageDriver, StorageDriverError, StorageDriverPermit, StorageDriverSelector,
     };
@@ -484,6 +504,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fields_are_processed_concurrently_up_to_the_per_message_limit() {
+        let driver = PeakDriver::default();
+        let storage = ExternalStorage::new(Arc::new(driver.clone()))
+            .unwrap()
+            .with_payload_size_threshold(0);
+        let limit = storage.max_operations_per_message();
+        let runner = ExternalStorageRunner::new(&storage);
+        // Each memo entry is its own field.
+        let mut memo = Memo {
+            fields: (0..limit + 2).map(|i| (i.to_string(), sized(1))).collect(),
+        };
+
+        runner.store_in(&mut memo, None).await.unwrap();
+        assert_eq!(driver.peak.swap(0, Ordering::SeqCst), limit);
+        runner.retrieve_in(&mut memo).await.unwrap();
+        assert_eq!(driver.peak.load(Ordering::SeqCst), limit);
+    }
+
+    #[tokio::test]
     async fn two_drivers_retrieve_concurrently() {
         // Both drivers share this barrier, so each retrieve blocks until the other is also
         // running — only possible if they overlap. The timeout fails a sequential regression
@@ -511,6 +550,58 @@ mod tests {
 
         assert_eq!(payloads[0].data, b"one");
         assert_eq!(payloads[1].data, b"two");
+    }
+
+    /// Records the most requests it has had in flight at once. Each request yields once before
+    /// finishing, so every request started together is in flight together.
+    #[derive(Clone, Default)]
+    struct PeakDriver {
+        in_flight: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl PeakDriver {
+        fn request<T: Send + 'static>(
+            &self,
+            results: Vec<T>,
+        ) -> BoxFuture<'static, Result<Vec<T>, StorageDriverError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let now = this.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                this.peak.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                this.in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(results)
+            })
+        }
+    }
+
+    impl StorageDriver for PeakDriver {
+        fn name(&self) -> &str {
+            "peak"
+        }
+        fn driver_type(&self) -> &str {
+            "test.peakdriver"
+        }
+        fn store(
+            &self,
+            _context: &StorageDriverStoreContext,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Result<Vec<StorageDriverClaim>, StorageDriverError>> {
+            self.request(
+                payloads
+                    .iter()
+                    .map(|_| StorageDriverClaim::new(HashMap::new()))
+                    .collect(),
+            )
+        }
+        fn retrieve(
+            &self,
+            _context: &StorageDriverRetrieveContext,
+            claims: Vec<StorageDriverClaim>,
+        ) -> BoxFuture<'static, Result<Vec<Payload>, StorageDriverError>> {
+            self.request(claims.iter().map(|_| sized(1)).collect())
+        }
     }
 
     struct StoringDriver {
