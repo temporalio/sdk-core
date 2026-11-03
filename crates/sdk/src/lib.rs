@@ -151,7 +151,9 @@ use temporalio_common::{
         ActivitySerializationContext, DataConverter, PayloadConversionError, SerializationContext,
         SerializationContextData, WorkflowSerializationContext,
     },
-    external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
+    external_storage::{
+        StorageOperationMetrics, StoreTarget, retrieve_external_payloads, store_external_payloads,
+    },
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
@@ -159,7 +161,7 @@ use temporalio_common::{
             ActivityTaskCompletion,
             activity_result::{self, ActivityExecutionResult, activity_execution_result},
             activity_task::{ActivityTask, activity_task},
-            common::NamespacedWorkflowExecution,
+            common::{ExternalStorageMetrics, NamespacedWorkflowExecution},
             workflow_activation::{WorkflowActivation, workflow_activation_job::Variant},
             workflow_commands::{
                 WorkflowCommand, signal_external_workflow_execution, workflow_command,
@@ -820,6 +822,9 @@ struct CommonWorker {
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
+    /// Retrieval metrics for each run's current activation, sent with its completion. Not part of
+    /// `workflows` because a run's first activation is retrieved before the run has an entry there.
+    download_metrics: RefCell<HashMap<String, ExternalStorageMetrics>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
     detect_nondeterministic_futures: bool,
@@ -991,6 +996,7 @@ async fn encode_workflow_completion(
     run: Option<&RunStoreTargets>,
 ) {
     let run_id = completion.run_id.clone();
+    let mut upload = StorageOperationMetrics::default();
     let encoded = async {
         encode_payloads(
             completion,
@@ -1002,12 +1008,12 @@ async fn encode_workflow_completion(
             Some(workflow_activation_completion::Status::Successful(success)) => {
                 for command in &mut success.commands {
                     let target = run.and_then(|run| run.for_command(command));
-                    store_external_payloads(command, data_converter, target).await?;
+                    upload.merge(store_external_payloads(command, data_converter, target).await?);
                 }
             }
             Some(workflow_activation_completion::Status::Failed(failed)) => {
                 let target = run.map(RunStoreTargets::current);
-                store_external_payloads(failed, data_converter, target).await?;
+                upload.merge(store_external_payloads(failed, data_converter, target).await?);
             }
             None => {}
         }
@@ -1025,6 +1031,8 @@ async fn encode_workflow_completion(
             Some(workflow_task_failed_cause(&err)),
         );
     }
+    // Also reported for a failed completion, since stores that succeeded still took time.
+    completion.payload_upload_metrics = upload.into_proto();
 }
 
 fn workflow_task_failed_cause(err: &PayloadConversionError) -> WorkflowTaskFailedCause {
@@ -1198,6 +1206,7 @@ impl Worker {
             },
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
+                download_metrics: Default::default(),
                 workflow_definitions: workflows,
                 workflow_removed_from_map: Default::default(),
                 detect_nondeterministic_futures: false,
@@ -1353,12 +1362,17 @@ impl Worker {
                             .borrow()
                             .get(&completion.run_id)
                             .map(|data| Arc::clone(&data.store_targets));
+                        let download = wf_half
+                            .download_metrics
+                            .borrow_mut()
+                            .remove(&completion.run_id);
                         encode_workflow_completion(
                             &mut completion,
                             &common.data_converter,
                             run.as_deref(),
                         )
                         .await;
+                        completion.payload_download_metrics = download;
                         for i in &common.worker_interceptors {
                             i.on_workflow_activation_completion(&completion).await;
                         }
@@ -1389,9 +1403,13 @@ impl Worker {
                                         source: Box::new(source),
                                     })?,
                                 };
+                            let mut download = StorageOperationMetrics::default();
                             let decoded = async {
-                                retrieve_external_payloads(&mut activation, &common.data_converter)
-                                    .await?;
+                                download = retrieve_external_payloads(
+                                    &mut activation,
+                                    &common.data_converter,
+                                )
+                                .await?;
                                 decode_payloads(
                                     &mut activation,
                                     common.data_converter.codec(),
@@ -1415,6 +1433,12 @@ impl Worker {
                                     ))
                                     .expect("Completion channel intact");
                                 continue;
+                            }
+                            if let Some(download) = download.into_proto() {
+                                wf_half
+                                    .download_metrics
+                                    .borrow_mut()
+                                    .insert(activation.run_id.clone(), download);
                             }
                             for i in &common.worker_interceptors {
                                 i.on_workflow_activation(&activation).await.map_err(|source| {

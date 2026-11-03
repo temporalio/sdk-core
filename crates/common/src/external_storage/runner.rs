@@ -14,7 +14,7 @@ use futures::{
     future::{self, BoxFuture},
     stream::{FuturesUnordered, TryStreamExt},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use prost::Message;
 use temporalio_common_wasm::data_converters::{
@@ -25,7 +25,10 @@ use temporalio_common_wasm::data_converters::{
 
 use crate::{
     data_converters::ExternalStorageError,
-    external_storage::references::{create_reference_payload, is_plain_reference, parse_reference},
+    external_storage::{
+        StorageOperationMetrics,
+        references::{create_reference_payload, is_plain_reference, parse_reference},
+    },
     payload_visitor::{AsyncPayloadVisitor, PayloadVisitable, payload_visitor},
     protos::temporal::api::common::v1::Payload,
 };
@@ -38,14 +41,14 @@ pub(crate) async fn store_in<M: PayloadVisitable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
     target: Option<&StorageDriverTargetInfo>,
-) -> Result<(), ExternalStorageError> {
+) -> Result<StorageOperationMetrics, ExternalStorageError> {
     match storage {
         Some(storage) => {
             ExternalStorageRunner::new(storage)
                 .store_in(message, target)
                 .await
         }
-        None => Ok(()),
+        None => Ok(StorageOperationMetrics::default()),
     }
 }
 
@@ -57,14 +60,16 @@ pub(crate) async fn store_in<M: PayloadVisitable + Send>(
 pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
-) -> Result<(), ExternalStorageError> {
+) -> Result<StorageOperationMetrics, ExternalStorageError> {
     match storage {
         Some(storage) => {
             ExternalStorageRunner::new(storage)
                 .retrieve_in(message)
                 .await
         }
-        None => crate::external_storage::references::reject_references_in(message).await,
+        None => crate::external_storage::references::reject_references_in(message)
+            .await
+            .map(|()| StorageOperationMetrics::default()),
     }
 }
 
@@ -106,14 +111,19 @@ impl<'a> ExternalStorageRunner<'a> {
         &self,
         message: &mut M,
         target: Option<&StorageDriverTargetInfo>,
-    ) -> Result<(), ExternalStorageError> {
-        let store = StorePayloadsVisitor {
+    ) -> Result<StorageOperationMetrics, ExternalStorageError> {
+        let start = Instant::now();
+        let mut store = StorePayloadsVisitor {
             storage: self.storage,
             target,
             limiter: &self.store_limiter,
+            metrics: StorageOperationMetrics::default(),
             error: None,
         };
-        Self::walk(message, store, |v| v.error.take()).await
+        Self::walk(message, &mut store, |v| v.error.take()).await?;
+        let mut metrics = store.metrics;
+        metrics.span = Some((start, Instant::now()));
+        Ok(metrics)
     }
 
     /// Replace every reference in a message with the payload it points at.
@@ -122,24 +132,29 @@ impl<'a> ExternalStorageRunner<'a> {
     pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
         &self,
         message: &mut M,
-    ) -> Result<(), ExternalStorageError> {
-        let retrieve = RetrievePayloadsVisitor {
+    ) -> Result<StorageOperationMetrics, ExternalStorageError> {
+        let start = Instant::now();
+        let mut retrieve = RetrievePayloadsVisitor {
             storage: self.storage,
             limiter: &self.retrieve_limiter,
+            metrics: StorageOperationMetrics::default(),
             error: None,
         };
-        Self::walk(message, retrieve, |v| v.error.take()).await
+        Self::walk(message, &mut retrieve, |v| v.error.take()).await?;
+        let mut metrics = retrieve.metrics;
+        metrics.span = Some((start, Instant::now()));
+        Ok(metrics)
     }
 
     /// The visitor reports only that it failed, so the typed error it captured is preferred over the
     /// placeholder that stopped the walk.
     async fn walk<M: PayloadVisitable + Send, V: AsyncPayloadVisitor + Send>(
         message: &mut M,
-        mut visitor: V,
+        visitor: &mut V,
         take_error: impl FnOnce(&mut V) -> Option<ExternalStorageError>,
     ) -> Result<(), ExternalStorageError> {
-        let walked = message.visit_payloads_mut(&mut visitor).await;
-        if let Some(error) = take_error(&mut visitor) {
+        let walked = message.visit_payloads_mut(visitor).await;
+        if let Some(error) = take_error(visitor) {
             return Err(error);
         }
         walked.map_err(|e| ExternalStorageError::Walk(Box::new(e)))
@@ -151,7 +166,7 @@ async fn retrieve_payloads(
     payloads: &mut [Payload],
     storage: &ExternalStorage,
     limiter: &Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
-) -> Result<(), ExternalStorageError> {
+) -> Result<StorageOperationMetrics, ExternalStorageError> {
     let mut by_driver: HashMap<String, (Vec<usize>, Vec<StorageDriverClaim>)> = HashMap::new();
     for (index, payload) in payloads.iter().enumerate() {
         if !is_plain_reference(payload) {
@@ -162,6 +177,11 @@ async fn retrieve_payloads(
         indices.push(index);
         claims.push(StorageDriverClaim::new(reference.claim_data));
     }
+
+    let mut retrieved_metrics = StorageOperationMetrics {
+        driver_names: by_driver.keys().cloned().collect(),
+        ..Default::default()
+    };
 
     // Resolve every driver first, so an unregistered name fails before any request is made.
     let mut work = Vec::with_capacity(by_driver.len());
@@ -197,18 +217,20 @@ async fn retrieve_payloads(
 
     while let Some(retrieved) = pending.try_next().await? {
         for (index, payload) in retrieved {
+            retrieved_metrics.payload_count += 1;
+            retrieved_metrics.total_size_bytes += payload.encoded_len() as u64;
             payloads[index] = payload;
         }
     }
-    Ok(())
+    Ok(retrieved_metrics)
 }
 
 /// Keep a pass's typed error aside and stop the walk with a placeholder, since the walk can only
 /// report a [`PayloadConversionError`].
-fn stop_walk(
+fn stop_walk<T>(
     slot: &mut Option<ExternalStorageError>,
-    result: Result<(), ExternalStorageError>,
-) -> Result<(), PayloadConversionError> {
+    result: Result<T, ExternalStorageError>,
+) -> Result<T, PayloadConversionError> {
     result.map_err(|e| {
         *slot = Some(e);
         PayloadConversionError::EncodingError("external storage pass failed".into())
@@ -219,26 +241,28 @@ struct StorePayloadsVisitor<'a> {
     storage: &'a ExternalStorage,
     target: Option<&'a StorageDriverTargetInfo>,
     limiter: &'a Arc<dyn StorageDriverLimiter<Payload>>,
+    metrics: StorageOperationMetrics,
     error: Option<ExternalStorageError>,
 }
 
 payload_visitor!(StorePayloadsVisitor<'_>, |this, payloads| {
     let mut payloads = payloads;
     let result = store_payloads(&mut payloads, this.storage, this.target, this.limiter).await;
-    stop_walk(&mut this.error, result)?;
+    this.metrics.merge(stop_walk(&mut this.error, result)?);
     payloads
 });
 
 struct RetrievePayloadsVisitor<'a> {
     storage: &'a ExternalStorage,
     limiter: &'a Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
+    metrics: StorageOperationMetrics,
     error: Option<ExternalStorageError>,
 }
 
 payload_visitor!(RetrievePayloadsVisitor<'_>, |this, payloads| {
     let mut payloads = payloads;
     let result = retrieve_payloads(&mut payloads, this.storage, this.limiter).await;
-    stop_walk(&mut this.error, result)?;
+    this.metrics.merge(stop_walk(&mut this.error, result)?);
     payloads
 });
 
@@ -251,7 +275,7 @@ async fn store_payloads(
     storage: &ExternalStorage,
     target: Option<&StorageDriverTargetInfo>,
     limiter: &Arc<dyn StorageDriverLimiter<Payload>>,
-) -> Result<(), ExternalStorageError> {
+) -> Result<StorageOperationMetrics, ExternalStorageError> {
     let select_context = StorageDriverSelectContext::builder()
         .maybe_target(target.cloned())
         .build();
@@ -283,6 +307,19 @@ async fn store_payloads(
             .1
             .push((index, size as i64));
     }
+
+    let stored_metrics = StorageOperationMetrics {
+        payload_count: by_driver
+            .values()
+            .map(|(_, group)| group.len() as u64)
+            .sum(),
+        total_size_bytes: by_driver
+            .values()
+            .flat_map(|(_, group)| group.iter().map(|&(_, size)| size as u64))
+            .sum(),
+        driver_names: by_driver.keys().cloned().collect(),
+        ..Default::default()
+    };
 
     let mut pending: FuturesUnordered<_> = by_driver
         .into_iter()
@@ -324,7 +361,7 @@ async fn store_payloads(
             payloads[index] = reference;
         }
     }
-    Ok(())
+    Ok(stored_metrics)
 }
 
 #[cfg(test)]
@@ -339,7 +376,7 @@ mod tests {
     };
     use anyhow::anyhow;
     use futures::future::{self, BoxFuture};
-    use std::sync::Mutex;
+    use std::{collections::BTreeSet, sync::Mutex};
     use temporalio_common_wasm::data_converters::{
         StorageDriver, StorageDriverError, StorageDriverPermit, StorageDriverSelector,
     };
@@ -836,6 +873,63 @@ mod tests {
             payloads[1], declined,
             "the declined payload was left inline"
         );
+    }
+
+    #[tokio::test]
+    async fn each_pass_reports_the_payloads_bytes_and_drivers_it_moved() {
+        let a: Arc<dyn StorageDriver> = Arc::new(RecordingDriver::new("a", Default::default()));
+        let b: Arc<dyn StorageDriver> = Arc::new(RecordingDriver::new("b", Default::default()));
+        let size = filled(b'a', 50).encoded_len();
+        let storage = ExternalStorage::with_selector(
+            vec![Arc::clone(&a), Arc::clone(&b)],
+            Arc::new(SelectByFirstByte(HashMap::from([(b'a', a), (b'b', b)]))),
+        )
+        .unwrap()
+        .with_payload_size_threshold(size);
+        let runner = ExternalStorageRunner::new(&storage);
+        let mut message = Payloads {
+            payloads: vec![
+                filled(b'a', 50),
+                filled(b'b', 50),
+                filled(b'b', 50),
+                filled(b'a', 1),
+            ],
+        };
+        // The payload under the threshold stays inline, so it is not counted.
+        let expected = StorageOperationMetrics {
+            payload_count: 3,
+            total_size_bytes: 3 * size as u64,
+            driver_names: BTreeSet::from(["a".to_owned(), "b".to_owned()]),
+            span: None,
+        };
+
+        let stored = runner.store_in(&mut message, None).await.unwrap();
+        assert_eq!(
+            StorageOperationMetrics {
+                span: None,
+                ..stored
+            },
+            expected
+        );
+        let retrieved = runner.retrieve_in(&mut message).await.unwrap();
+        assert_eq!(
+            StorageOperationMetrics {
+                span: None,
+                ..retrieved
+            },
+            expected
+        );
+
+        let nothing_to_store = runner
+            .store_in(
+                &mut Payloads {
+                    payloads: vec![filled(b'a', 1)],
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(nothing_to_store.into_proto(), None);
     }
 
     #[tokio::test]
