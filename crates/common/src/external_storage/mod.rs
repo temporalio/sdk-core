@@ -11,7 +11,7 @@ use crate::data_converters::{
 };
 use crate::{
     data_converters::{DataConverter, PayloadConversionError},
-    payload_visitor::PayloadVisitable,
+    payload_visitor::PayloadFieldCollectable,
     protos::coresdk::common::ExternalStorageMetrics,
 };
 use std::{collections::BTreeSet, time::Instant};
@@ -74,7 +74,7 @@ impl StorageOperationMetrics {
 ///
 /// On error, reported as [`PayloadConversionError::ExternalStorage`], the message is left partly
 /// processed and must not be sent.
-pub async fn store_external_payloads<M: PayloadVisitable + Send>(
+pub async fn store_external_payloads<M: PayloadFieldCollectable + Send>(
     msg: &mut M,
     data_converter: &DataConverter,
     target: Option<StoreTarget>,
@@ -176,7 +176,7 @@ fn non_empty(value: &str) -> Option<String> {
 /// retrieved.
 ///
 /// On error the message is left partly processed and must not be used.
-pub async fn retrieve_external_payloads<M: PayloadVisitable + Send>(
+pub async fn retrieve_external_payloads<M: PayloadFieldCollectable + Send>(
     msg: &mut M,
     data_converter: &DataConverter,
 ) -> Result<Option<StorageOperationMetrics>, PayloadConversionError> {
@@ -185,7 +185,7 @@ pub async fn retrieve_external_payloads<M: PayloadVisitable + Send>(
     #[cfg(not(feature = "experimental"))]
     let metrics = {
         let _ = data_converter;
-        references::reject_references_in(msg).await?;
+        references::reject_references_in(msg)?;
         None
     };
     Ok(metrics)
