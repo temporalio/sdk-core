@@ -33,6 +33,8 @@ relevant information.
 
 ## Unreleased
 
+## [1.1.2] - 2026-11-03
+
 ### Fixed
 * Workers no longer leak memory for every activity task they run. Each task's cancellation
   handle was previously kept until the worker exited.
