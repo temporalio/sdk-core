@@ -16,13 +16,15 @@
 //!
 //! Pass extensions to `ClientOptions::load_from_config_with_extensions`. Each is called in order
 //! with the loaded profile and environment, and any client plugin it returns is registered on the
-//! returned `ClientOptions`:
+//! returned `ClientOptions`. Pass the returned options to `Client::connect`; building a
+//! `Connection` yourself and calling `Client::new` skips plugins' connection hooks:
 //!
 //! ```rust,ignore
 //! let (conn_options, client_options) = ClientOptions::load_from_config_with_extensions(
 //!     LoadClientConfigProfileOptions::default(),
 //!     &[&MyExtension],
 //! )?;
+//! let client = Client::connect(conn_options, client_options).await?;
 //! ```
 //!
 //! Extensions are recommended to use a `TEMPORAL_EXT_<NAME>_` prefix for their environment
@@ -57,6 +59,10 @@ impl ClientOptions {
     /// Each extension is called in order with the loaded profile, and any plugin it returns is
     /// registered on the returned [`ClientOptions`]. Extension names must be non-empty and unique.
     /// Errors returned by an extension are wrapped in a [`ClientConfigExtensionError`].
+    ///
+    /// Pass the returned options to [`Client::connect`](crate::Client::connect) so that plugin
+    /// connection option hooks are applied. [`Client::new`](crate::Client::new) only applies
+    /// client option hooks.
     ///
     /// **Experimental:** This API may change or be removed.
     #[cfg(feature = "experimental")]
