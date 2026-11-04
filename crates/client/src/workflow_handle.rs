@@ -555,8 +555,7 @@ impl<W: WorkflowDefinition> UpdateDefinition for UntypedUpdate<W> {
 }
 
 /// Shared by [WorkflowHandle::start_update] and the client's update-with-start, which sends the
-/// same update request as one of its operations. Update starts always wait for the update to be
-/// accepted; results are waited on separately via the update handle.
+/// same update request as one of its operations.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_update_workflow_request(
     namespace: String,
@@ -567,6 +566,7 @@ pub(crate) fn build_update_workflow_request(
     update_name: String,
     header: Option<Header>,
     payloads: Vec<Payload>,
+    wait_stage: UpdateWorkflowExecutionLifecycleStage,
 ) -> UpdateWorkflowExecutionRequest {
     UpdateWorkflowExecutionRequest {
         namespace,
@@ -575,7 +575,7 @@ pub(crate) fn build_update_workflow_request(
             run_id,
         }),
         wait_policy: Some(WaitPolicy {
-            lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Accepted.into(),
+            lifecycle_stage: wait_stage.into(),
         }),
         request: Some(update::v1::Request {
             meta: Some(update::v1::Meta {
@@ -956,7 +956,14 @@ where
         U::Output: 'static,
     {
         let rpc_options = options.rpc_options.clone();
-        let handle = self.start_update(update, input, options.into()).await?;
+        let handle = self
+            .start_update_at_stage(
+                update,
+                input,
+                options.into(),
+                UpdateWorkflowExecutionLifecycleStage::Completed,
+            )
+            .await?;
         handle.get_result(rpc_options).await
     }
 
@@ -967,6 +974,27 @@ where
         update: U,
         input: U::Input,
         options: WorkflowStartUpdateOptions,
+    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
+    where
+        CT: WorkflowService + NamespacedClient + Clone,
+        U: UpdateDefinition<Workflow = W::Run>,
+        U::Input: Send,
+    {
+        self.start_update_at_stage(
+            update,
+            input,
+            options,
+            UpdateWorkflowExecutionLifecycleStage::Accepted,
+        )
+        .await
+    }
+
+    async fn start_update_at_stage<U>(
+        &self,
+        update: U,
+        input: U::Input,
+        options: WorkflowStartUpdateOptions,
+        wait_stage: UpdateWorkflowExecutionLifecycleStage,
     ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
@@ -1023,6 +1051,7 @@ where
                                 update_name,
                                 options.header,
                                 payloads,
+                                wait_stage,
                             );
                             let target = request.workflow_execution.as_ref().map(|execution| {
                                 StoreTarget::workflow(
@@ -1548,7 +1577,8 @@ mod tests {
                 update::v1::UpdateRef,
                 workflow::v1::WorkflowExecutionConfig,
                 workflowservice::v1::{
-                    GetWorkflowExecutionHistoryResponse, UpdateWorkflowExecutionResponse,
+                    GetWorkflowExecutionHistoryResponse, PollWorkflowExecutionUpdateResponse,
+                    UpdateWorkflowExecutionResponse,
                 },
             },
         },
@@ -1978,6 +2008,13 @@ mod tests {
     }
 
     impl WorkflowService for MockUpdateClient {
+        fn poll_workflow_execution_update(
+            &mut self,
+            _: Request<PollWorkflowExecutionUpdateRequest>,
+        ) -> BoxFuture<'_, Result<Response<PollWorkflowExecutionUpdateResponse>, Status>> {
+            panic!("unexpected poll RPC: outcome was returned by update_workflow_execution");
+        }
+
         fn update_workflow_execution(
             &mut self,
             request: Request<UpdateWorkflowExecutionRequest>,
@@ -1987,6 +2024,53 @@ mod tests {
             let response = state.responses.pop_front().expect("unexpected submission");
             Box::pin(async { response.map(Response::new) })
         }
+    }
+
+    #[tokio::test]
+    async fn execute_update_requests_completion() {
+        let payload = Payload {
+            data: vec![1, 2, 3],
+            ..Default::default()
+        };
+        let state = Arc::new(Mutex::new(MockUpdateState {
+            responses: VecDeque::from([Ok(UpdateWorkflowExecutionResponse {
+                stage: UpdateStage::Completed as i32,
+                outcome: Some(update::v1::Outcome {
+                    value: Some(update::v1::outcome::Value::Success(Payloads {
+                        payloads: vec![payload.clone()],
+                    })),
+                }),
+                ..Default::default()
+            })]),
+            ..Default::default()
+        }));
+        let handle = WorkflowHandle::<_, UntypedWorkflow>::new(
+            MockUpdateClient(state.clone()),
+            WorkflowExecutionInfo::builder()
+                .namespace("ns")
+                .workflow_id("wf")
+                .build(),
+        );
+        let result = handle
+            .execute_update(
+                UntypedUpdate::new("handler"),
+                RawValue::new(vec![]),
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.payloads, vec![payload]);
+        let state = state.lock().unwrap();
+        assert_eq!(state.requests.len(), 1);
+        assert_eq!(
+            state.requests[0]
+                .wait_policy
+                .as_ref()
+                .unwrap()
+                .lifecycle_stage,
+            UpdateStage::Completed as i32,
+        );
     }
 
     #[rstest::rstest]
@@ -2055,6 +2139,10 @@ mod tests {
         let state = state.lock().unwrap();
         assert_eq!(state.requests.len(), expected_requests);
         let first = &state.requests[0];
+        assert_eq!(
+            first.wait_policy.as_ref().unwrap().lifecycle_stage,
+            UpdateStage::Accepted as i32,
+        );
         // A retry must remain the same logical update
         assert!(state.requests.iter().all(|request| request == first));
         assert!(first.workflow_execution.as_ref().unwrap().run_id.is_empty());
