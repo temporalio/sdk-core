@@ -20,47 +20,57 @@ mod references;
 #[cfg(feature = "experimental")]
 mod runner;
 
-/// What one or more store or retrieve passes moved, reported to Core on a workflow completion.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// What one or more store or retrieve passes moved, and the time they took, reported to Core on a
+/// workflow completion. Only a pass that moved at least one payload has metrics.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageOperationMetrics {
-    payload_count: u64,
-    total_size_bytes: u64,
+    totals: StorageOperationTotals,
     /// From the earliest pass's start to the latest pass's end, so merging is correct whether the
     /// passes ran one after another or concurrently.
-    span: Option<(Instant, Instant)>,
+    start: Instant,
+    end: Instant,
+}
+
+/// What a pass moved, summed over the fields it visited.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct StorageOperationTotals {
+    payload_count: u64,
+    total_size_bytes: u64,
     driver_names: BTreeSet<String>,
 }
 
-impl StorageOperationMetrics {
-    /// Add another pass's metrics, in any order.
-    pub fn merge(&mut self, other: Self) {
+impl StorageOperationTotals {
+    fn add(&mut self, other: Self) {
         self.payload_count += other.payload_count;
         self.total_size_bytes += other.total_size_bytes;
-        self.span = match (self.span, other.span) {
-            (Some((start, end)), Some((other_start, other_end))) => {
-                Some((start.min(other_start), end.max(other_end)))
-            }
-            (span, other_span) => span.or(other_span),
-        };
         self.driver_names.extend(other.driver_names);
     }
+}
 
-    /// The metrics in Core's form, or `None` when nothing was stored or retrieved.
-    pub fn into_proto(self) -> Option<ExternalStorageMetrics> {
-        (self.payload_count > 0).then(|| ExternalStorageMetrics {
-            payload_count: self.payload_count,
-            total_size_bytes: self.total_size_bytes,
-            total_duration: self
-                .span
-                .and_then(|(start, end)| (end - start).try_into().ok()),
-            driver_names: self.driver_names.into_iter().collect(),
-        })
+impl StorageOperationMetrics {
+    /// Combine two passes' metrics, in any order.
+    pub fn merge(mut self, other: Self) -> Self {
+        self.totals.add(other.totals);
+        self.start = self.start.min(other.start);
+        self.end = self.end.max(other.end);
+        self
+    }
+
+    /// The metrics in Core's form.
+    pub fn into_proto(self) -> ExternalStorageMetrics {
+        ExternalStorageMetrics {
+            payload_count: self.totals.payload_count,
+            total_size_bytes: self.totals.total_size_bytes,
+            total_duration: (self.end - self.start).try_into().ok(),
+            driver_names: self.totals.driver_names.into_iter().collect(),
+        }
     }
 }
 
 /// Offload every eligible payload in an outbound message to the data converter's external storage.
 /// Runs after [`encode_payloads`](crate::payload_visitor::encode_payloads), since the size
-/// threshold applies to encoded payloads. Does nothing without the `experimental` feature.
+/// threshold applies to encoded payloads. Does nothing without the `experimental` feature. Returns
+/// metrics only when a payload was offloaded.
 ///
 /// On error, reported as [`PayloadConversionError::ExternalStorage`], the message is left partly
 /// processed and must not be sent.
@@ -68,7 +78,7 @@ pub async fn store_external_payloads<M: PayloadVisitable + Send>(
     msg: &mut M,
     data_converter: &DataConverter,
     target: Option<StoreTarget>,
-) -> Result<StorageOperationMetrics, PayloadConversionError> {
+) -> Result<Option<StorageOperationMetrics>, PayloadConversionError> {
     #[cfg(feature = "experimental")]
     let metrics = runner::store_in(
         data_converter.external_storage(),
@@ -79,7 +89,7 @@ pub async fn store_external_payloads<M: PayloadVisitable + Send>(
     #[cfg(not(feature = "experimental"))]
     let metrics = {
         let _ = (msg, data_converter, target);
-        StorageOperationMetrics::default()
+        None
     };
     Ok(metrics)
 }
@@ -162,20 +172,21 @@ fn non_empty(value: &str) -> Option<String> {
 /// Runs before [`decode_payloads`](crate::payload_visitor::decode_payloads), since a driver returns
 /// a payload as it was before offloading. Without external storage to retrieve them, which includes
 /// every build without the `experimental` feature, a reference is an error instead. Failures are
-/// reported as [`PayloadConversionError::ExternalStorage`].
+/// reported as [`PayloadConversionError::ExternalStorage`]. Returns metrics only when a payload was
+/// retrieved.
 ///
 /// On error the message is left partly processed and must not be used.
 pub async fn retrieve_external_payloads<M: PayloadVisitable + Send>(
     msg: &mut M,
     data_converter: &DataConverter,
-) -> Result<StorageOperationMetrics, PayloadConversionError> {
+) -> Result<Option<StorageOperationMetrics>, PayloadConversionError> {
     #[cfg(feature = "experimental")]
     let metrics = runner::retrieve_in(data_converter.external_storage(), msg).await?;
     #[cfg(not(feature = "experimental"))]
     let metrics = {
         let _ = data_converter;
         references::reject_references_in(msg).await?;
-        StorageOperationMetrics::default()
+        None
     };
     Ok(metrics)
 }
@@ -192,19 +203,15 @@ mod tests {
     fn merged_passes_report_the_time_they_spanned() {
         let start = Instant::now();
         let pass = |from: u64, to: u64| StorageOperationMetrics {
-            payload_count: 1,
-            span: Some((
-                start + Duration::from_millis(from),
-                start + Duration::from_millis(to),
-            )),
-            ..Default::default()
+            totals: StorageOperationTotals {
+                payload_count: 1,
+                ..Default::default()
+            },
+            start: start + Duration::from_millis(from),
+            end: start + Duration::from_millis(to),
         };
-        let mut merged = StorageOperationMetrics::default();
-        merged.merge(pass(50, 150));
-        merged.merge(pass(0, 100));
-        merged.merge(StorageOperationMetrics::default());
 
-        let proto = merged.into_proto().unwrap();
+        let proto = pass(50, 150).merge(pass(0, 100)).into_proto();
         assert_eq!(proto.payload_count, 2);
         assert_eq!(
             proto.total_duration,

@@ -996,7 +996,7 @@ async fn encode_workflow_completion(
     run: Option<&RunStoreTargets>,
 ) {
     let run_id = completion.run_id.clone();
-    let mut upload = StorageOperationMetrics::default();
+    let mut uploads = Vec::new();
     let encoded = async {
         encode_payloads(
             completion,
@@ -1008,12 +1008,12 @@ async fn encode_workflow_completion(
             Some(workflow_activation_completion::Status::Successful(success)) => {
                 for command in &mut success.commands {
                     let target = run.and_then(|run| run.for_command(command));
-                    upload.merge(store_external_payloads(command, data_converter, target).await?);
+                    uploads.push(store_external_payloads(command, data_converter, target).await?);
                 }
             }
             Some(workflow_activation_completion::Status::Failed(failed)) => {
                 let target = run.map(RunStoreTargets::current);
-                upload.merge(store_external_payloads(failed, data_converter, target).await?);
+                uploads.push(store_external_payloads(failed, data_converter, target).await?);
             }
             None => {}
         }
@@ -1032,7 +1032,11 @@ async fn encode_workflow_completion(
         );
     }
     // Also reported for a failed completion, since stores that succeeded still took time.
-    completion.payload_upload_metrics = upload.into_proto();
+    completion.payload_upload_metrics = uploads
+        .into_iter()
+        .flatten()
+        .reduce(StorageOperationMetrics::merge)
+        .map(StorageOperationMetrics::into_proto);
 }
 
 fn workflow_task_failed_cause(err: &PayloadConversionError) -> WorkflowTaskFailedCause {
@@ -1403,7 +1407,7 @@ impl Worker {
                                         source: Box::new(source),
                                     })?,
                                 };
-                            let mut download = StorageOperationMetrics::default();
+                            let mut download = None;
                             let decoded = async {
                                 download = retrieve_external_payloads(
                                     &mut activation,
@@ -1419,6 +1423,14 @@ impl Worker {
                                 Ok::<_, PayloadConversionError>(())
                             }
                             .await;
+                            // Recorded before a decoding failure is reported, since retrieval that
+                            // succeeded still took time.
+                            if let Some(download) = download {
+                                wf_half
+                                    .download_metrics
+                                    .borrow_mut()
+                                    .insert(activation.run_id.clone(), download.into_proto());
+                            }
                             if let Err(err) = decoded {
                                 let run_id = activation.run_id;
                                 error!(run_id, error = %err, "Failed decoding workflow activation");
@@ -1433,12 +1445,6 @@ impl Worker {
                                     ))
                                     .expect("Completion channel intact");
                                 continue;
-                            }
-                            if let Some(download) = download.into_proto() {
-                                wf_half
-                                    .download_metrics
-                                    .borrow_mut()
-                                    .insert(activation.run_id.clone(), download);
                             }
                             for i in &common.worker_interceptors {
                                 i.on_workflow_activation(&activation).await.map_err(|source| {
