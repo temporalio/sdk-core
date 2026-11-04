@@ -1,1 +1,1 @@
-Ephemeral dev and test servers now reserve automatically selected ports on macOS, avoiding intermittent startup failures when the host allocates ports concurrently.
+Ephemeral dev and test servers now complete the automatic port reservation handshake on Linux and macOS before starting, avoiding intermittent address-in-use failures.
