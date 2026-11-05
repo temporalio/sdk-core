@@ -72,7 +72,7 @@ enum StreamErrorReason {
     // The batch has the `sequence` of the last one of its epoch, and other content.
     // FAILED_PRECONDITION.
     STREAM_ERROR_REASON_SEQ_DIVERGENT = 6;
-    // A create names another owner than the Stream has, or the owner doesn't allow this close.
+    // A create gives another owner than the Stream has, or the owner doesn't allow this close.
     // FAILED_PRECONDITION.
     STREAM_ERROR_REASON_NOT_OWNER = 7;
     // A newer format version wrote the Stream. FAILED_PRECONDITION.
@@ -90,6 +90,6 @@ enum StreamErrorReason {
     STREAM_ERROR_REASON_UNKNOWN_WRITER = 13;
     // The Store lacks a capability that the call needs. UNIMPLEMENTED.
     STREAM_ERROR_REASON_UNSUPPORTED = 14;
-    // A create with the FAIL conflict policy names a Stream that exists. ALREADY_EXISTS.
+    // A create with the FAIL conflict policy is for a Stream that exists. ALREADY_EXISTS.
     STREAM_ERROR_REASON_ALREADY_EXISTS = 15;
 }

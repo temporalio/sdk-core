@@ -22,7 +22,7 @@ message StreamHandle {
     // Unset for a standalone Stream. For a Stream bound to a Workflow, business_id is the Workflow
     // ID and run_id is the first execution run id of its run chain. For a Standalone Activity,
     // business_id is the activity ID and run_id is its run id. A create and a close of a
-    // Workflow-owned Stream must name its owner.
+    // Workflow-owned Stream must carry its owner.
     temporal.api.common.v1.Execution owner = 2;
     // The name of the backend that holds the Stream, as the Worker and client config register
     // it, so every process routes a handle it receives. Empty is the default backend. The Store
@@ -106,7 +106,7 @@ message AppendRecord {
 // Experimental. Might change in the future.
 // Which earlier Records a retried Producer withdraws. The Store keeps these facts for the first
 // batch of a higher epoch, or for a retry run's first write, and a read builds a Superseded item
-// from them. A reader drops the earlier Records that the facts name.
+// from them. A reader drops the earlier Records that the facts match.
 message StreamSuperseded {
     // The id of the Producer that withdraws.
     string producer_id = 1;
@@ -143,7 +143,7 @@ message StreamClose {
 
 // Experimental. Might change in the future.
 // An offset is ordered and unique in one Stream, and it is sparse. Offsets have gaps, so they
-// don't count Records. Zero is never an offset. A read names its Stream, so the read checks the
+// don't count Records. Zero is never an offset. A read gives its Stream, so the read checks the
 // offset against that Stream.
 message StreamRecord {
     int64 offset = 1;
@@ -151,7 +151,7 @@ message StreamRecord {
     oneof item {
         StreamData data = 2;
         // The Store keeps only the withdrawal facts of the first batch of a higher epoch. A read
-        // builds this item from them. It withdraws the earlier Records that the facts name, and a
+        // builds this item from them. It withdraws the earlier Records that the facts match, and a
         // reader drops them.
         StreamSuperseded superseded = 3;
         StreamClose close = 4;

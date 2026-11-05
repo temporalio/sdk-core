@@ -25,10 +25,10 @@ import "temporal/api/stream/v1/message.proto";
 // with the same request_id, gets created true. Each policy fails with CLOSED on a closed Stream,
 // EXPIRED on an expired one, and NOT_OWNER on one with another owner.
 // (-- api-linter: core::0133=disabled
-//     aip.dev/not-precedent: The request names a Stream by namespace and handle. --)
+//     aip.dev/not-precedent: The request identifies a Stream by namespace and handle. --)
 message CreateStreamRequest {
     string namespace = 1;
-    // The handle of the Stream to create. Its id names the Stream, and is never empty. A bound
+    // The handle of the Stream to create. Its id is the Stream id, and is never empty. A bound
     // Stream's handle has the owner's run chain as its owner.
     temporal.api.stream.v1.StreamHandle stream_handle = 2;
     // The age after which a Record is dropped. Empty is the Store default.
@@ -36,7 +36,7 @@ message CreateStreamRequest {
     // Workflow only. The previous run on a retry run's first create, to withdraw its Records.
     string withdraw_run = 4;
     // The Workflow run that owns a bound Stream, with its run_id and a Workflow epoch. It needs a
-    // handle whose owner names the run's chain. Unset for a standalone Stream.
+    // handle whose owner is the run's chain. Unset for a standalone Stream.
     temporal.api.stream.v1.Producer owner = 5;
     // Only read by the server. When set, the server closes the Stream when the owner's run chain
     // ends, also on a terminate or a timeout. It needs owner, and a handle with a Workflow owner.
