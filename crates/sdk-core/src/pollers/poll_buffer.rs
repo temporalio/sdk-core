@@ -15,7 +15,7 @@ use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use std::{
     cmp,
     fmt::Debug,
-    future::{self, Future},
+    future::Future,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -35,7 +35,7 @@ use tokio::{
     sync::{
         Mutex, broadcast,
         mpsc::{UnboundedReceiver, unbounded_channel},
-        oneshot, watch,
+        watch,
     },
     task::JoinHandle,
 };
@@ -496,7 +496,7 @@ where
     }
 
     #[cfg(test)]
-    fn mock<R>(resps: R) -> Self
+    pub(crate) fn mock<R>(resps: R) -> Self
     where
         R: IntoIterator,
         <R as IntoIterator>::IntoIter: Send + 'static,
@@ -920,7 +920,7 @@ impl PersistentPollErrorWarningState {
 mod tests {
     use super::*;
     use crate::{
-        abstractions::tests::fixed_size_permit_dealer, advance_fut, pollers::StickyTaskPoller,
+        abstractions::tests::fixed_size_permit_dealer,
         worker::client::mocks::mock_manual_worker_client,
     };
     use futures_util::FutureExt;
@@ -1527,47 +1527,5 @@ mod tests {
 
         state.reset();
         assert_eq!(state.record_error(started_at + minute * 45), None);
-    }
-
-    #[rstest::rstest]
-    #[case::normal_ends_first(false)]
-    #[case::sticky_ends_first(false)]
-    #[ignore]
-    #[tokio::test]
-    async fn wft_poller_drains_both_normal_and_sticky_pollers_before_returning_none(
-        #[case] sticky_ends_first: bool,
-    ) {
-        let first_msg = "first message";
-        let first_error = Err(tonic::Status::internal(first_msg).into());
-        let first_poller = LongPollBuffer::mock([future::ready(first_error)]);
-
-        let second_msg = "second message";
-        let second_error = Err(tonic::Status::internal(second_msg).into());
-        let (do_second_poll_tx, do_second_poll_rx) = oneshot::channel();
-        let second_poller = LongPollBuffer::mock([async move {
-            do_second_poll_rx.await.unwrap();
-            second_error
-        }]);
-
-        let mut poller = if sticky_ends_first {
-            StickyTaskPoller::new(second_poller, Some(first_poller))
-        } else {
-            StickyTaskPoller::new(first_poller, Some(second_poller))
-        };
-
-        assert_matches!(poller.poll().await, Some(Err(PollerError::Tonic(e))) if e.message() == first_msg);
-        assert_matches!(poller.poll().await, Some(Err(PollerError::PollerStopped)));
-
-        {
-            let poll_fut = poller.poll();
-            advance_fut!(poll_fut);
-            do_second_poll_tx.send(()).unwrap();
-            assert_matches!(poll_fut.await, Some(Err(PollerError::Tonic(e))) if e.message() == second_msg);
-        }
-
-        assert_matches!(poller.poll().await, Some(Err(PollerError::PollerStopped)));
-        assert_matches!(poller.poll().await, None);
-
-        poller.shutdown().await;
     }
 }

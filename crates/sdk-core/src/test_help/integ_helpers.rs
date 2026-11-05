@@ -463,7 +463,7 @@ impl MocksHolder {
     }
 }
 
-fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
+pub(crate) fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
 where
     T: Send + Sync + 'static,
     I: IntoIterator<Item = QueueResponse<T>>,

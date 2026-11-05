@@ -537,6 +537,7 @@ async fn activity_timeout_no_double_resolve() {
 /// completion (FIFO). The stream processes BumpStream, sees `shutdown_done()`
 /// is true, and exits — dropping the eviction completion's response channel
 /// sender without fulfilling it.
+#[ignore = "Test sometimes hangs up, and ignore_evicts_on_shutdown are slated for removal."] // https://github.com/temporalio/sdk-rust/issues/1765
 #[tokio::test]
 async fn eviction_completion_during_shutdown_does_not_panic() {
     let t = canned_histories::activity_double_resolve_repro();

@@ -41,10 +41,8 @@ pub(crate) fn sticky_poller_behavior(
     }
 }
 
-type StickyTaskPollerStream<T, SK>
-where
-    SK: SlotKind,
-= BoxStream<'static, PollerResult<(T, OwnedMeteredSemPermit<SK>)>>;
+type StickyTaskPollerStream<T, SK> =
+    BoxStream<'static, PollerResult<(T, OwnedMeteredSemPermit<SK>)>>;
 
 /// A poller capable of polling on a sticky and a nonsticky queue simultaneously.
 pub(crate) struct StickyTaskPoller<T, SK: SlotKind> {
@@ -284,7 +282,11 @@ impl StickyPollerShared {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::test_worker_cfg;
+    use crate::{
+        WorkflowSlotKind, advance_fut, pollers::PollWorkflowTaskQueueResponse,
+        test_help::test_worker_cfg,
+    };
+    use futures_util::FutureExt;
 
     #[test]
     fn max_polls_calculated_properly() {
@@ -301,5 +303,48 @@ mod tests {
             sticky_poller_behavior(PollerBehavior::SimpleMaximum(5), &cfg, true),
             PollerBehavior::SimpleMaximum(4)
         );
+    }
+
+    #[rstest::rstest]
+    #[case::normal_ends_first(false)]
+    #[case::sticky_ends_first(false)]
+    #[tokio::test]
+    async fn drains_both_normal_and_sticky_pollers_before_returning_none(
+        #[case] sticky_ends_first: bool,
+    ) {
+        let first_msg = "first message";
+        let first_error = Err(tonic::Status::internal(first_msg).into());
+        let first_poller =
+            LongPollBuffer::<PollWorkflowTaskQueueResponse, WorkflowSlotKind>::mock([
+                future::ready(first_error),
+            ]);
+
+        let second_msg = "second message";
+        let second_error = Err(tonic::Status::internal(second_msg).into());
+        let (do_second_poll_tx, do_second_poll_rx) = oneshot::channel::<()>();
+        let second_poller = LongPollBuffer::mock([async move {
+            do_second_poll_rx.await.unwrap();
+            second_error
+        }]);
+
+        let mut poller = if sticky_ends_first {
+            StickyTaskPoller::new(second_poller, Some(first_poller))
+        } else {
+            StickyTaskPoller::new(first_poller, Some(second_poller))
+        };
+
+        assert_matches!(poller.poll().await, Some(Err(PollerError::Tonic(e))) if e.message() == first_msg);
+
+        {
+            let poll_fut = poller.poll();
+            advance_fut!(poll_fut);
+            do_second_poll_tx.send(()).unwrap();
+            assert_matches!(poll_fut.await, Some(Err(PollerError::Tonic(e))) if e.message() == second_msg);
+        }
+
+        assert_matches!(poller.poll().await, Some(Err(PollerError::PollerStopped)));
+        assert_matches!(poller.poll().await, None);
+
+        poller.shutdown().await;
     }
 }

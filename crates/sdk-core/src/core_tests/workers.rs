@@ -17,16 +17,13 @@ use crate::{
         },
     },
 };
-use futures_util::{FutureExt, future, stream, stream::StreamExt};
+use futures_util::{FutureExt, stream, stream::StreamExt};
 use std::{
     cell::RefCell,
     collections::HashMap,
     future,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 use temporalio_client::worker::ClientWorkerSet;
