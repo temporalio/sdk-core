@@ -22,15 +22,5 @@ path = "../common"
 version = "~1.1.0"
 default-features = false
 
-# Only for its descriptor set, which the build script reads for the API protos that the Stream
-# protos import.
-[dependencies.temporalio-protos]
-path = "../protos"
-version = "~0.10.0"
-
-[build-dependencies]
-protox = "0.9.1"
-tonic-prost-build = { workspace = true }
-
 [lints]
 workspace = true

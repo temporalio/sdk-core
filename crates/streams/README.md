@@ -6,12 +6,11 @@ Workflow makes each Stream call from a Local Activity. Core has no Stream code.
 
 ## Protos
 
-- `protos/temporal/api/stream/v1/message.proto`,
-  `protos/temporal/api/streamservice/v1/request_response.proto` and
-  `protos/temporal/api/enums/v1/stream.proto` are the Stream protos of the API proposal, byte for
-  byte. The API protos of this repo don't have them yet, so the crate generates them. Lang
-  generates the same files. They import API protos that the build reads from the descriptor set
-  of `temporalio-protos`, and that map to the types of `temporalio-common`. So the packaged crate
-  needs no file outside itself.
-- `protos/temporal/sdk/streams/v1/runtime.proto` has the crate's own calls, such as the writer
-  calls.
+The crate defines no protos. `temporalio-protos` generates them, and `temporalio_streams::proto`
+re-exports them, so a value needs no conversion between the crates.
+
+- `temporal/api/stream/v1/message.proto`, `temporal/api/streamservice/v1/request_response.proto`
+  and `temporal/api/enums/v1/stream.proto` are the Stream protos of the API. They are in
+  `crates/protos/protos/api_upstream`.
+- `crates/protos/protos/local/temporal/sdk/core/streams/streams.proto`, in the package
+  `coresdk.streams`, has the crate's own calls, such as the writer calls.

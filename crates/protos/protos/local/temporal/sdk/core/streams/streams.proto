@@ -1,12 +1,14 @@
 syntax = "proto3";
 
-// The messages of the crate's own calls, in addition to the five Stream service operations. Lang
-// sends them through the bridge's call on the runtime object, by the method name in each comment.
-// One generic call keeps Stream logic out of every bridge.
-package temporal.sdk.streams.v1;
+package coresdk.streams;
+option ruby_package = "Temporalio::Internal::Bridge::Api::Streams";
 
 import "google/protobuf/duration.proto";
 import "temporal/api/stream/v1/message.proto";
+
+// The messages of the calls that `temporalio-streams` adds to the five Stream service operations.
+// Lang sends them through the bridge's call on the runtime object, by the method name in each
+// comment. One generic call keeps Stream logic out of every bridge.
 
 // Method `OpenWriter`, asynchronous. A writer for an Activity, a Local Activity or a client
 // Producer, which keeps its epoch and `sequence` order. A writer of a Local Activity, or of an

@@ -39,6 +39,8 @@ const SERDE_DERIVE_PREFIXES: &[&str] = &[
     ".temporal.api.replication",
     ".temporal.api.rules",
     ".temporal.api.schedule",
+    ".temporal.api.stream",
+    ".temporal.api.streamservice",
     ".temporal.api.taskqueue",
     ".temporal.api.testservice",
     ".temporal.api.update",
@@ -55,11 +57,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:descriptor_path={}", descriptor_file.display());
     let protos = &[
         "./protos/local/temporal/sdk/core/core_interface.proto",
+        "./protos/local/temporal/sdk/core/streams/streams.proto",
         "./protos/api_upstream/temporal/api/sdk/v1/external_storage.proto",
         "./protos/api_upstream/temporal/api/sdk/v1/workflow_metadata.proto",
         "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
         "./protos/api_upstream/temporal/api/nexusservices/workerservice/v1/request_response.proto",
         "./protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
+        "./protos/api_upstream/temporal/api/streamservice/v1/request_response.proto",
         "./protos/api_upstream/temporal/api/errordetails/v1/message.proto",
         "./protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto",
         "./protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
