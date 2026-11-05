@@ -40,6 +40,8 @@ relevant information.
   name the run's last completed workflow task, and `failed_tasks`, the started event ids of the
   run's last 100 failed or timed out workflow tasks. Retries that Core runs locally keep the
   value. Core leaves it unset for other activities.
+* A new experimental crate, `temporalio-streams`, has the Stream runtime that the SDKs link
+  into their bridges. Core itself has no Stream code.
 
 ### Security
 * Ephemeral server downloads now use `zip` 9.0 for ZIP extraction, replacing the 8.x dependency

@@ -12,6 +12,7 @@ keywords = ["temporal", "workflow", "streams"]
 categories = ["development-tools"]
 
 [dependencies]
+async-trait = "0.1"
 prost = { workspace = true }
 prost-types = { workspace = true }
 thiserror = { workspace = true }
@@ -21,6 +22,9 @@ tonic = { workspace = true }
 path = "../common"
 version = "~1.1.0"
 default-features = false
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true
