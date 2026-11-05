@@ -7,20 +7,20 @@
 //! to read.
 //!
 //! References are stored and read in plain form, so a reference's claim data (its driver name and
-//! claim keys) is written to history unencrypted. The payload codec is not applied to references,
-//! and the configured concurrency limits are not enforced.
+//! claim keys) is written to history unencrypted. The payload codec is not applied to references.
 
 use futures::{
+    FutureExt,
     future::{self, BoxFuture},
-    stream::{FuturesUnordered, TryStreamExt},
+    stream::{self, FuturesUnordered, StreamExt, TryStreamExt},
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use prost::Message;
 use temporalio_common_wasm::data_converters::{
-    ExternalStorage, PayloadConversionError, StorageDriver, StorageDriverClaim, StorageDriverError,
-    StorageDriverLimiter, StorageDriverPermit, StorageDriverRetrieveContext,
-    StorageDriverSelectContext, StorageDriverStoreContext, StorageDriverTargetInfo,
+    ExternalStorage, StorageDriver, StorageDriverClaim, StorageDriverError, StorageDriverLimiter,
+    StorageDriverPermit, StorageDriverRetrieveContext, StorageDriverSelectContext,
+    StorageDriverStoreContext, StorageDriverTargetInfo,
 };
 
 use crate::{
@@ -29,7 +29,7 @@ use crate::{
         StorageOperationMetrics, StorageOperationTotals,
         references::{create_reference_payload, is_plain_reference, parse_reference},
     },
-    payload_visitor::{AsyncPayloadVisitor, PayloadVisitable, payload_visitor},
+    payload_visitor::{PayloadFieldCollectable, transformable_fields},
     protos::temporal::api::common::v1::Payload,
 };
 
@@ -37,7 +37,7 @@ use crate::{
 /// external storage is configured.
 ///
 /// On error the message is left partly processed and must not be used.
-pub(crate) async fn store_in<M: PayloadVisitable + Send>(
+pub(crate) async fn store_in<M: PayloadFieldCollectable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
     target: Option<&StorageDriverTargetInfo>,
@@ -57,7 +57,7 @@ pub(crate) async fn store_in<M: PayloadVisitable + Send>(
 /// as though it were the application's own data.
 ///
 /// On error the message is left partly processed and must not be used.
-pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
+pub(crate) async fn retrieve_in<M: PayloadFieldCollectable + Send>(
     storage: Option<&ExternalStorage>,
     message: &mut M,
 ) -> Result<Option<StorageOperationMetrics>, ExternalStorageError> {
@@ -67,9 +67,7 @@ pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
                 .retrieve_in(message)
                 .await
         }
-        None => crate::external_storage::references::reject_references_in(message)
-            .await
-            .map(|()| None),
+        None => crate::external_storage::references::reject_references_in(message).map(|()| None),
     }
 }
 
@@ -119,53 +117,61 @@ impl<'a> ExternalStorageRunner<'a> {
     /// Replace every eligible payload in a message with a reference.
     ///
     /// On error the message is left partly processed and must not be used.
-    pub(crate) async fn store_in<M: PayloadVisitable + Send>(
+    pub(crate) async fn store_in<M: PayloadFieldCollectable + Send>(
         &self,
         message: &mut M,
         target: Option<&StorageDriverTargetInfo>,
     ) -> Result<Option<StorageOperationMetrics>, ExternalStorageError> {
         let start = Instant::now();
-        let mut store = StorePayloadsVisitor {
-            storage: self.storage,
-            target,
-            limiter: &self.store_limiter,
-            totals: StorageOperationTotals::default(),
-            error: None,
-        };
-        Self::walk(message, &mut store, |v| v.error.take()).await?;
-        Ok(store.totals.into_metrics(start))
+        let mut totals = StorageOperationTotals::default();
+        // Boxed and collected first so the stream holds no closures, without which the compiler
+        // cannot prove a caller's future is `Send`.
+        let stores: Vec<_> = transformable_fields(message)
+            .map(|field| {
+                store_payloads(
+                    field.into_payloads_mut(),
+                    self.storage,
+                    target,
+                    &self.store_limiter,
+                )
+                .boxed()
+            })
+            .collect();
+        let mut stored =
+            stream::iter(stores).buffer_unordered(self.storage.max_operations_per_message());
+        while let Some(field_totals) = stored.try_next().await? {
+            totals.add(field_totals);
+        }
+        Ok(totals.into_metrics(start))
     }
 
     /// Replace every reference in a message with the payload it points at.
     ///
     /// On error the message is left partly processed and must not be used.
-    pub(crate) async fn retrieve_in<M: PayloadVisitable + Send>(
+    pub(crate) async fn retrieve_in<M: PayloadFieldCollectable + Send>(
         &self,
         message: &mut M,
     ) -> Result<Option<StorageOperationMetrics>, ExternalStorageError> {
         let start = Instant::now();
-        let mut retrieve = RetrievePayloadsVisitor {
-            storage: self.storage,
-            limiter: &self.retrieve_limiter,
-            totals: StorageOperationTotals::default(),
-            error: None,
-        };
-        Self::walk(message, &mut retrieve, |v| v.error.take()).await?;
-        Ok(retrieve.totals.into_metrics(start))
-    }
-
-    /// The visitor reports only that it failed, so the typed error it captured is preferred over the
-    /// placeholder that stopped the walk.
-    async fn walk<M: PayloadVisitable + Send, V: AsyncPayloadVisitor + Send>(
-        message: &mut M,
-        visitor: &mut V,
-        take_error: impl FnOnce(&mut V) -> Option<ExternalStorageError>,
-    ) -> Result<(), ExternalStorageError> {
-        let walked = message.visit_payloads_mut(visitor).await;
-        if let Some(error) = take_error(visitor) {
-            return Err(error);
+        let mut totals = StorageOperationTotals::default();
+        // Boxed and collected first so the stream holds no closures, without which the compiler
+        // cannot prove a caller's future is `Send`.
+        let retrieves: Vec<_> = transformable_fields(message)
+            .map(|field| {
+                retrieve_payloads(
+                    field.into_payloads_mut(),
+                    self.storage,
+                    &self.retrieve_limiter,
+                )
+                .boxed()
+            })
+            .collect();
+        let mut retrieved =
+            stream::iter(retrieves).buffer_unordered(self.storage.max_operations_per_message());
+        while let Some(field_totals) = retrieved.try_next().await? {
+            totals.add(field_totals);
         }
-        walked.map_err(|e| ExternalStorageError::Walk(Box::new(e)))
+        Ok(totals.into_metrics(start))
     }
 }
 
@@ -232,47 +238,6 @@ async fn retrieve_payloads(
     }
     Ok(totals)
 }
-
-/// Keep a pass's typed error aside and stop the walk with a placeholder, since the walk can only
-/// report a [`PayloadConversionError`].
-fn stop_walk<T>(
-    slot: &mut Option<ExternalStorageError>,
-    result: Result<T, ExternalStorageError>,
-) -> Result<T, PayloadConversionError> {
-    result.map_err(|e| {
-        *slot = Some(e);
-        PayloadConversionError::EncodingError("external storage pass failed".into())
-    })
-}
-
-struct StorePayloadsVisitor<'a> {
-    storage: &'a ExternalStorage,
-    target: Option<&'a StorageDriverTargetInfo>,
-    limiter: &'a Arc<dyn StorageDriverLimiter<Payload>>,
-    totals: StorageOperationTotals,
-    error: Option<ExternalStorageError>,
-}
-
-payload_visitor!(StorePayloadsVisitor<'_>, |this, payloads| {
-    let mut payloads = payloads;
-    let result = store_payloads(&mut payloads, this.storage, this.target, this.limiter).await;
-    this.totals.add(stop_walk(&mut this.error, result)?);
-    payloads
-});
-
-struct RetrievePayloadsVisitor<'a> {
-    storage: &'a ExternalStorage,
-    limiter: &'a Arc<dyn StorageDriverLimiter<StorageDriverClaim>>,
-    totals: StorageOperationTotals,
-    error: Option<ExternalStorageError>,
-}
-
-payload_visitor!(RetrievePayloadsVisitor<'_>, |this, payloads| {
-    let mut payloads = payloads;
-    let result = retrieve_payloads(&mut payloads, this.storage, this.limiter).await;
-    this.totals.add(stop_walk(&mut this.error, result)?);
-    payloads
-});
 
 /// One driver and the payloads it takes: each payload's index and its pre-offload proto size.
 type DriverGroup = (Arc<dyn StorageDriver>, Vec<(usize, i64)>);
@@ -383,7 +348,13 @@ mod tests {
     };
     use anyhow::anyhow;
     use futures::future::{self, BoxFuture};
-    use std::{collections::BTreeSet, sync::Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
     use temporalio_common_wasm::data_converters::{
         StorageDriver, StorageDriverError, StorageDriverPermit, StorageDriverSelector,
     };
@@ -533,6 +504,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fields_are_processed_concurrently_up_to_the_per_message_limit() {
+        let driver = PeakDriver::default();
+        let storage = ExternalStorage::new(Arc::new(driver.clone()))
+            .unwrap()
+            .with_payload_size_threshold(0);
+        let limit = storage.max_operations_per_message();
+        let runner = ExternalStorageRunner::new(&storage);
+        // Each memo entry is its own field.
+        let mut memo = Memo {
+            fields: (0..limit + 2).map(|i| (i.to_string(), sized(1))).collect(),
+        };
+
+        runner.store_in(&mut memo, None).await.unwrap();
+        assert_eq!(driver.peak.swap(0, Ordering::SeqCst), limit);
+        runner.retrieve_in(&mut memo).await.unwrap();
+        assert_eq!(driver.peak.load(Ordering::SeqCst), limit);
+    }
+
+    #[tokio::test]
     async fn two_drivers_retrieve_concurrently() {
         // Both drivers share this barrier, so each retrieve blocks until the other is also
         // running — only possible if they overlap. The timeout fails a sequential regression
@@ -560,6 +550,58 @@ mod tests {
 
         assert_eq!(payloads[0].data, b"one");
         assert_eq!(payloads[1].data, b"two");
+    }
+
+    /// Records the most requests it has had in flight at once. Each request yields once before
+    /// finishing, so every request started together is in flight together.
+    #[derive(Clone, Default)]
+    struct PeakDriver {
+        in_flight: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl PeakDriver {
+        fn request<T: Send + 'static>(
+            &self,
+            results: Vec<T>,
+        ) -> BoxFuture<'static, Result<Vec<T>, StorageDriverError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let now = this.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                this.peak.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                this.in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(results)
+            })
+        }
+    }
+
+    impl StorageDriver for PeakDriver {
+        fn name(&self) -> &str {
+            "peak"
+        }
+        fn driver_type(&self) -> &str {
+            "test.peakdriver"
+        }
+        fn store(
+            &self,
+            _context: &StorageDriverStoreContext,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Result<Vec<StorageDriverClaim>, StorageDriverError>> {
+            self.request(
+                payloads
+                    .iter()
+                    .map(|_| StorageDriverClaim::new(HashMap::new()))
+                    .collect(),
+            )
+        }
+        fn retrieve(
+            &self,
+            _context: &StorageDriverRetrieveContext,
+            claims: Vec<StorageDriverClaim>,
+        ) -> BoxFuture<'static, Result<Vec<Payload>, StorageDriverError>> {
+            self.request(claims.iter().map(|_| sized(1)).collect())
+        }
     }
 
     struct StoringDriver {
