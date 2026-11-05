@@ -63,6 +63,12 @@ relevant information.
   series it replaces. It cannot be combined with histogram bucket overrides. Explicit buckets
   remain the default.
 
+### Changed
+* Autoscaling poller pools now report their current poller target to the server on each poll and
+  in the worker heartbeat, letting the server spread poller scaling suggestions across the workers
+  on a task queue instead of concentrating them on whichever worker happens to receive the most
+  tasks.
+
 ## [0.10.0] - 2026-10-06
 
 ### Added
