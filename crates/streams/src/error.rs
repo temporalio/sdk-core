@@ -42,6 +42,8 @@ pub enum Reason {
     UnknownWriter,
     /// The Store lacks a capability that the call needs.
     Unsupported,
+    /// A create that doesn't use an existing Stream names a Stream that exists.
+    AlreadyExists,
 }
 
 impl Reason {
@@ -63,6 +65,7 @@ impl Reason {
             Reason::Storage => "stream_storage",
             Reason::UnknownWriter => "stream_unknown_writer",
             Reason::Unsupported => "stream_unsupported",
+            Reason::AlreadyExists => "stream_already_exists",
         }
     }
 
@@ -83,6 +86,7 @@ impl Reason {
             Reason::Storage => StreamErrorReason::Storage,
             Reason::UnknownWriter => StreamErrorReason::UnknownWriter,
             Reason::Unsupported => StreamErrorReason::Unsupported,
+            Reason::AlreadyExists => StreamErrorReason::AlreadyExists,
         }
     }
 
@@ -101,6 +105,7 @@ impl Reason {
             Reason::Offset => Code::OutOfRange,
             Reason::Storage => Code::Unavailable,
             Reason::Unsupported => Code::Unimplemented,
+            Reason::AlreadyExists => Code::AlreadyExists,
         }
     }
 }

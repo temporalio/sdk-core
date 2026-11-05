@@ -20,9 +20,10 @@ import "temporal/api/failure/v1/message.proto";
 import "temporal/api/stream/v1/message.proto";
 
 // Experimental. Might change in the future.
-// Creates the Stream, or gets it when it exists. Then created is false, and the Stream keeps its
-// own Retention. It fails with CLOSED on a closed Stream, EXPIRED on an expired one, and NOT_OWNER
-// on one with another owner.
+// Creates the Stream. When the Stream exists, FAIL fails with ALREADY_EXISTS, and USE_EXISTING
+// gets it with created false and its own Retention. A retry of the create that made the Stream,
+// with the same request_id, gets created true. Each policy fails with CLOSED on a closed Stream,
+// EXPIRED on an expired one, and NOT_OWNER on one with another owner.
 // (-- api-linter: core::0133=disabled
 //     aip.dev/not-precedent: The request names a Stream by namespace and stream_id. --)
 message CreateStreamRequest {
@@ -35,8 +36,8 @@ message CreateStreamRequest {
     google.protobuf.Duration retention = 3;
     // Workflow only. The previous run on a retry run's first create, to withdraw its Records.
     string withdraw_run = 4;
-    // The Workflow run that owns the Stream. Workflow kind, with its run_id and epoch. It needs a
-    // handle whose owner names the run's chain.
+    // The Workflow run that owns a bound Stream. Workflow kind, with its run_id and epoch. It needs
+    // a handle whose owner names the run's chain. Unset for a standalone Stream.
     temporal.api.stream.v1.Producer owner = 6;
     // Only the server reads it. The server closes the Stream with the outcome of the owner's run
     // chain, terminate and timeout included. It needs owner, and a handle with a Workflow owner.
@@ -49,6 +50,11 @@ message CreateStreamRequest {
     // Only the server reads it. The server checks that the token is the Activity's current
     // attempt, so a caller can't put a Stream into a Standalone Activity it isn't.
     bytes task_token = 9;
+    // What the create does when the Stream exists. Unspecified is FAIL.
+    temporal.api.enums.v1.StreamIdConflictPolicy id_conflict_policy = 10;
+    // Unique for each create call, and the same on its retries. The Store keeps the request_id of
+    // the create that made the Stream, so a retry after a lost answer doesn't get ALREADY_EXISTS.
+    string request_id = 11;
 }
 
 // Experimental. Might change in the future.
@@ -94,6 +100,8 @@ message AppendRecordsResponse {
 }
 
 // Experimental. Might change in the future.
+// Only the owner's run chain closes a bound Stream. Only a Workflow or a client closes a
+// standalone Stream.
 message CloseStreamRequest {
     string namespace = 1;
     temporal.api.stream.v1.StreamHandle handle = 2;

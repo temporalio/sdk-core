@@ -19,10 +19,10 @@ import "temporal/api/failure/v1/message.proto";
 // Identifies one Stream. The id is opaque to callers.
 message StreamHandle {
     string id = 1;
-    // Unset for a client's Stream. For a Workflow, business_id is the Workflow ID and run_id is
-    // the first execution run id of its run chain. For a Standalone Activity, business_id is the
-    // activity ID and run_id is its run id. A create and a close of a Workflow-owned Stream must
-    // name its owner.
+    // Unset for a standalone Stream. For a Stream bound to a Workflow, business_id is the Workflow
+    // ID and run_id is the first execution run id of its run chain. For a Standalone Activity,
+    // business_id is the activity ID and run_id is its run id. A create and a close of a
+    // Workflow-owned Stream must name its owner.
     temporal.api.common.v1.Execution owner = 2;
     // The name of the backend that holds the Stream, as the Worker and client config register
     // it, so every process routes a handle it receives. Empty is the default backend. The Store
