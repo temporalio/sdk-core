@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -29,16 +29,22 @@ use temporalio_client::{
 use temporalio_common::{
     MemoValues,
     data_converters::{
-        DataConverter, ExternalStorage, ExternalStorageError, PayloadConversionError,
+        DataConverter, DefaultFailureConverter, ExternalStorage, ExternalStorageError,
+        PayloadCodec, PayloadConversionError, PayloadConverter, SerializationContextData,
         StorageDriver, StorageDriverActivityInfo, StorageDriverClaim, StorageDriverError,
         StorageDriverRetrieveContext, StorageDriverStoreContext, StorageDriverTargetInfo,
         StorageDriverWorkflowInfo,
     },
-    protos::temporal::api::{
-        common::v1::{Payload, RetryPolicy},
-        enums::v1::WorkflowTaskFailedCause,
-        failure::v1::failure::FailureInfo,
-        history::v1::history_event::Attributes,
+    protos::{
+        coresdk::{
+            common::ExternalStorageMetrics, workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            common::v1::{Payload, RetryPolicy},
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::failure::FailureInfo,
+            history::v1::history_event::Attributes,
+        },
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -46,6 +52,7 @@ use temporalio_sdk::{
     ActivityOptions, ChildWorkflowOptions, ContinueAsNewOptions, Runtime, SyncWorkflowContext,
     WorkerOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
     activities::{ActivityContext, ActivityError},
+    interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::CoreRuntime;
 use tokio::sync::mpsc;
@@ -796,6 +803,189 @@ async fn async_activity_results_round_trip_through_external_storage() {
         _ => None,
     });
     assert!(is_reference(&activity_result.unwrap()));
+}
+
+type RecordedStorageMetrics = Vec<(
+    Option<ExternalStorageMetrics>,
+    Option<ExternalStorageMetrics>,
+)>;
+
+struct StorageMetricsRecorder(Arc<Mutex<RecordedStorageMetrics>>);
+
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for StorageMetricsRecorder {
+    async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+        self.0.lock().unwrap().push((
+            completion.payload_download_metrics.clone(),
+            completion.payload_upload_metrics.clone(),
+        ));
+    }
+}
+
+#[tokio::test]
+async fn workflow_completions_report_what_external_storage_moved() {
+    let client = client_with_storage(Arc::new(InMemoryDriver::default())).await;
+
+    let mut starter =
+        CoreWfStarter::new_with_overrides(LargePayloadWorkflow::name(), None, Some(client.clone()));
+    starter
+        .sdk_config
+        .register_activities(LargePayloadActivities);
+    starter
+        .sdk_config
+        .register_workflow::<LargePayloadWorkflow>()
+        .unwrap();
+    let workflow_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    worker
+        .submit_workflow(
+            LargePayloadWorkflow::run,
+            "m".repeat(10_000),
+            WorkflowStartOptions::new(starter.get_task_queue(), workflow_id).build(),
+        )
+        .await
+        .unwrap();
+    let recorded = Arc::new(Mutex::new(vec![]));
+    worker
+        .run_until_done_intercepted(Some(StorageMetricsRecorder(Arc::clone(&recorded))))
+        .await
+        .unwrap();
+
+    let recorded = recorded.lock().unwrap();
+    // The workflow's input and the activity's result were retrieved, and the activity's input and
+    // the workflow's result were stored.
+    for (direction, reported) in [
+        (
+            "download",
+            recorded
+                .iter()
+                .filter_map(|(d, _)| d.as_ref())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "upload",
+            recorded
+                .iter()
+                .filter_map(|(_, u)| u.as_ref())
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        let payload_count: u64 = reported.iter().map(|m| m.payload_count).sum();
+        assert_eq!(payload_count, 2, "{direction}: {reported:?}");
+        for metrics in reported {
+            assert_eq!(
+                metrics.driver_names,
+                vec!["memory".to_owned()],
+                "{direction}"
+            );
+            assert!(
+                metrics.total_size_bytes > 10_000,
+                "{direction}: {metrics:?}"
+            );
+            assert!(metrics.total_duration.is_some(), "{direction}: {metrics:?}");
+        }
+    }
+}
+
+/// Fails the first decode of a workflow's payloads, after they have been retrieved.
+#[derive(Default)]
+struct FailFirstWorkflowDecode(AtomicBool);
+
+impl PayloadCodec for FailFirstWorkflowDecode {
+    fn encode(
+        &self,
+        _context: &SerializationContextData,
+        payloads: Vec<Payload>,
+    ) -> BoxFuture<'static, Result<Vec<Payload>, PayloadConversionError>> {
+        Box::pin(future::ready(Ok(payloads)))
+    }
+
+    fn decode(
+        &self,
+        context: &SerializationContextData,
+        payloads: Vec<Payload>,
+    ) -> BoxFuture<'static, Result<Vec<Payload>, PayloadConversionError>> {
+        let fail = matches!(context, SerializationContextData::Workflow(_))
+            && !payloads.is_empty()
+            && !self.0.swap(true, Ordering::SeqCst);
+        Box::pin(future::ready(if fail {
+            Err(PayloadConversionError::EncodingError(
+                "intentional decode failure".into(),
+            ))
+        } else {
+            Ok(payloads)
+        }))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_activation_decode_reports_what_was_retrieved() {
+    let storage = ExternalStorage::new(Arc::new(InMemoryDriver::default()))
+        .unwrap()
+        .with_payload_size_threshold(1024);
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter::default(),
+        FailFirstWorkflowDecode::default(),
+    )
+    .with_external_storage(storage);
+    let client = Client::new(
+        get_integ_connection(None).await,
+        ClientOptions::new(integ_namespace())
+            .data_converter(data_converter)
+            .build(),
+    )
+    .unwrap();
+
+    let mut starter =
+        CoreWfStarter::new_with_overrides("failed_activation_decode", None, Some(client.clone()));
+    starter
+        .sdk_config
+        .register_activities(LargePayloadActivities);
+    starter
+        .sdk_config
+        .register_workflow::<LargePayloadWorkflow>()
+        .unwrap();
+    let workflow_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    worker
+        .submit_workflow(
+            LargePayloadWorkflow::run,
+            "d".repeat(10_000),
+            WorkflowStartOptions::new(starter.get_task_queue(), workflow_id).build(),
+        )
+        .await
+        .unwrap();
+    let recorded = Arc::new(Mutex::new(vec![]));
+    worker
+        .run_until_done_intercepted(Some(StorageMetricsRecorder(Arc::clone(&recorded))))
+        .await
+        .unwrap();
+
+    assert!(
+        starter
+            .get_history()
+            .await
+            .events
+            .iter()
+            .any(|event| matches!(
+                event.attributes,
+                Some(Attributes::WorkflowTaskFailedEventAttributes(_))
+            )),
+        "the first workflow task should have failed"
+    );
+    // The failed completion stores nothing, which tells it apart from the retry's, which stores
+    // the activity's input.
+    let recorded = recorded.lock().unwrap();
+    let (download, upload) = &recorded[0];
+    assert_eq!(
+        download.as_ref().map(|m| m.payload_count),
+        Some(1),
+        "{recorded:?}"
+    );
+    assert_eq!(upload, &None, "{recorded:?}");
 }
 
 #[tokio::test]
