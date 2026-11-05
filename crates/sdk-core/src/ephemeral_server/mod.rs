@@ -581,12 +581,17 @@ fn get_free_port(bind_ip: &str) -> io::Result<u16> {
     #[cfg(not(target_os = "windows"))]
     {
         // Establish a connection to the bind_ip:port
-        let _stream = std::net::TcpStream::connect(addr)?;
+        let mut stream = std::net::TcpStream::connect(addr)?;
 
         // Accept the connection from the listening side
-        let (socket, _addr) = listen.accept()?;
+        let (mut socket, _addr) = listen.accept()?;
 
-        // Explicitly drop the socket to close the connection from the listening side first
+        // Wait for both FINs so the server side reaches TIME_WAIT before the port is returned.
+        // Merely dropping the sockets can race the caller's next bind with TCP teardown.
+        socket.shutdown(std::net::Shutdown::Write)?;
+        io::copy(&mut stream, &mut io::sink())?;
+        stream.shutdown(std::net::Shutdown::Write)?;
+        io::copy(&mut socket, &mut io::sink())?;
         drop(socket);
     }
 
