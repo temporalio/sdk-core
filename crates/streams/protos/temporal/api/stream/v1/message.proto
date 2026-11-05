@@ -32,45 +32,69 @@ message StreamHandle {
 
 // Experimental. Might change in the future.
 // The ordered attempt of a Producer. A higher epoch supersedes the Records of a lower epoch of the
-// same Producer. Epochs compare field by field, in the order of the field numbers. Each kind sets
-// only its own fields. A field that a kind does not use is empty and compares as zero.
+// same Producer. The case is the kind of the Producer. It decides how the Store orders the epochs,
+// and which earlier Records a higher epoch withdraws.
 message ProducerEpoch {
-    // Workflow and Local Activity. The started event id of the Workflow Task of a Workflow, or of
-    // the Workflow Task that dispatched a Local Activity.
-    int64 task_started_event_id = 1;
-    // Workflow and Local Activity. The attempt of that Workflow Task.
-    int32 task_attempt = 2;
-    // Workflow and Local Activity. When that Workflow Task attempt started. It tells a reused
-    // started event id apart, for example after a dropped speculative task.
-    google.protobuf.Timestamp task_started_time = 3;
-    // Activity and Standalone Activity. When the server scheduled this attempt. An Activity reset
-    // starts the attempt count again, so only this time orders the attempts across a reset. A
-    // Local Activity or a client has no attempt that the server schedules.
-    google.protobuf.Timestamp attempt_scheduled_time = 4;
-    // Activity, Standalone Activity, Local Activity and client. The Producer's own attempt. For a
-    // Local Activity it counts the retries of the Local Activity, and task_attempt counts the
-    // attempts of the Workflow Task that dispatched it.
-    int32 attempt = 5;
+    oneof kind {
+        // A Workflow run, which writes in its Workflow Task. A higher epoch withdraws the Records
+        // of the run's Workflow Tasks that never completed, also those of their Local Activities.
+        WorkflowTaskEpoch workflow = 1;
+        // A Local Activity. A higher epoch withdraws the Producer's lower epochs.
+        LocalActivityEpoch local_activity = 2;
+        // An Activity of a Workflow. A higher epoch withdraws the Producer's lower epochs.
+        ActivityEpoch activity = 3;
+        // A Standalone Activity. A higher epoch withdraws the Producer's lower epochs.
+        ActivityEpoch standalone_activity = 4;
+        // A client. A higher epoch only fences the lower ones, since a restarted client's earlier
+        // Records are real messages, not the Records of a failed attempt.
+        ClientEpoch client = 5;
+    }
+}
+
+// Experimental. Might change in the future.
+// One Workflow Task attempt of a run. It orders by started_event_id, then attempt, then
+// started_time.
+message WorkflowTaskEpoch {
+    int64 started_event_id = 1;
+    int32 attempt = 2;
+    // Tells a reused started event id apart, for example after a dropped speculative task.
+    google.protobuf.Timestamp started_time = 3;
+}
+
+// Experimental. Might change in the future.
+// The attempt of a Local Activity. It orders by task, then attempt, so a Local Activity of a
+// later Workflow Task supersedes one of an earlier task.
+message LocalActivityEpoch {
+    // The Workflow Task attempt that dispatched the Local Activity.
+    WorkflowTaskEpoch task = 1;
+    // The Local Activity's own attempt in that Workflow Task.
+    int32 attempt = 2;
+}
+
+// Experimental. Might change in the future.
+// The attempt of an Activity. It orders by attempt_scheduled_time, then attempt.
+message ActivityEpoch {
+    // When the server scheduled this attempt. An Activity reset starts the attempt count again,
+    // so only this time orders the attempts across a reset.
+    google.protobuf.Timestamp attempt_scheduled_time = 1;
+    int32 attempt = 2;
+}
+
+// Experimental. Might change in the future.
+// The attempt of a client Producer, which the client picks.
+message ClientEpoch {
+    int32 attempt = 1;
 }
 
 // Experimental. Might change in the future.
 // The code that wrote a batch. Its id stays the same across attempts, and its epoch orders them.
 message Producer {
-    temporal.api.enums.v1.StreamProducerKind kind = 1;
     // Stable across attempts, such as `wf:<run id>` for the Workflow Producer of a run.
-    string id = 2;
-    ProducerEpoch epoch = 3;
+    string id = 1;
+    // Required. Its case gives the kind of the Producer.
+    ProducerEpoch epoch = 2;
     // The run of the Producer, so nobody parses the id. Empty for a client.
-    string run_id = 4;
-}
-
-// Experimental. Might change in the future.
-// One Workflow Task attempt of a run. The withdrawal facts name the run's last completed task
-// with it.
-message WorkflowTaskEpoch {
-    int64 started_event_id = 1;
-    int32 attempt = 2;
-    google.protobuf.Timestamp started_time = 3;
+    string run_id = 3;
 }
 
 // Experimental. Might change in the future.
@@ -84,20 +108,19 @@ message AppendRecord {
 // batch of a higher epoch, or for a retry run's first write, and a read builds a Superseded item
 // from them. A reader drops the earlier Records that the facts name.
 message StreamSuperseded {
-    // The kind of the Producer that withdraws.
-    temporal.api.enums.v1.StreamProducerKind producer_kind = 1;
     // The id of the Producer that withdraws.
-    string producer_id = 2;
-    // The epoch of the Producer that withdraws. Its lower epochs are withdrawn.
-    ProducerEpoch epoch = 3;
+    string producer_id = 1;
+    // The epoch of the Producer that withdraws, whose case picks the rule. Empty when only
+    // withdraw_run applies.
+    ProducerEpoch epoch = 2;
     // Workflow only. The run's last completed Workflow Task.
-    WorkflowTaskEpoch previous_completed_task = 4;
+    WorkflowTaskEpoch previous_completed_task = 3;
     // Workflow only. The started event ids of the run's failed or timed out Workflow Tasks.
-    repeated int64 failed_tasks = 5;
+    repeated int64 failed_tasks = 4;
     // Workflow retry only. The previous run. Every Record whose Producer carries it is withdrawn.
-    string withdraw_run = 6;
+    string withdraw_run = 5;
     // The run of the Producer, so nobody parses the id. Empty for a client.
-    string run_id = 7;
+    string run_id = 6;
 }
 
 // Experimental. Might change in the future.

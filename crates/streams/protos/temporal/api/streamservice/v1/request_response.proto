@@ -35,8 +35,8 @@ message CreateStreamRequest {
     google.protobuf.Duration retention = 3;
     // Workflow only. The previous run on a retry run's first create, to withdraw its Records.
     string withdraw_run = 4;
-    // The Workflow run that owns a bound Stream. Workflow kind, with its run_id and epoch. It needs
-    // a handle whose owner names the run's chain. Unset for a standalone Stream.
+    // The Workflow run that owns a bound Stream, with its run_id and a Workflow epoch. It needs a
+    // handle whose owner names the run's chain. Unset for a standalone Stream.
     temporal.api.stream.v1.Producer owner = 5;
     // Only read by the server. When set, the server closes the Stream when the owner's run chain
     // ends, also on a terminate or a timeout. It needs owner, and a handle with a Workflow owner.

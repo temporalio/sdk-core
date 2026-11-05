@@ -10,18 +10,6 @@ option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Experimental. Might change in the future.
-// The kind of code that wrote a batch. The kind decides how the Store orders the Producer's
-// epochs, which earlier Records a higher epoch withdraws, and if the Producer can close the Stream.
-enum StreamProducerKind {
-    STREAM_PRODUCER_KIND_UNSPECIFIED = 0;
-    STREAM_PRODUCER_KIND_WORKFLOW = 1;
-    STREAM_PRODUCER_KIND_LOCAL_ACTIVITY = 2;
-    STREAM_PRODUCER_KIND_ACTIVITY = 3;
-    STREAM_PRODUCER_KIND_CLIENT = 4;
-    STREAM_PRODUCER_KIND_STANDALONE_ACTIVITY = 5;
-}
-
-// Experimental. Might change in the future.
 // How a Stream closed, so a reader tells a terminated or timed out owner from a failed one
 // without parsing the failure.
 // (-- api-linter: core::0216::synonyms=disabled
