@@ -35,7 +35,7 @@ message TaskQueueMetadata {
 
 // Worker-reported state about the poller pool issuing a poll, used by the server to spread
 // poller scaling suggestions across a fleet.
-message PollerScalingInfo {
+message PollerPoolInfo {
     // Number of concurrent poll requests this worker is currently targeting for this task
     // queue and task type. 0 if unknown, such as a poller pool of fixed size.
     int32 target_pollers = 1;

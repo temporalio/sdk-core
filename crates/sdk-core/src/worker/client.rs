@@ -42,9 +42,7 @@ use temporalio_common::protos::{
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
-        taskqueue::v1::{
-            PollerScalingInfo, StickyExecutionAttributes, TaskQueue, TaskQueueMetadata,
-        },
+        taskqueue::v1::{PollerPoolInfo, StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
@@ -497,9 +495,9 @@ impl WorkerClient for WorkerClientBag {
             worker_instance_key: self.worker_instance_key.to_string(),
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
-            poller_scaling_info: poll_options
+            poller_pool_info: poll_options
                 .target_pollers
-                .map(|target_pollers| PollerScalingInfo { target_pollers }),
+                .map(|target_pollers| PollerPoolInfo { target_pollers }),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -540,9 +538,9 @@ impl WorkerClient for WorkerClientBag {
             worker_instance_key: self.worker_instance_key.to_string(),
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
-            poller_scaling_info: poll_options
+            poller_pool_info: poll_options
                 .target_pollers
-                .map(|target_pollers| PollerScalingInfo { target_pollers }),
+                .map(|target_pollers| PollerPoolInfo { target_pollers }),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
