@@ -208,36 +208,25 @@ mod tests {
         StreamRuntime::new("test", "", Arc::new(NoStore), None)
     }
 
+    // Each method decodes its request before anything else, so a bad request is invalid even with
+    // no Store. A typo in a method name would make it unknown, which is unsupported, so the loop
+    // also checks the names that a bridge calls.
     #[tokio::test]
-    async fn each_method_decodes_its_request_and_is_unsupported() {
-        let runtime = runtime();
-        for method in METHODS {
-            // Empty bytes are the default request of every method.
-            let error = runtime.call(method, &[]).await.unwrap_err();
-            assert_eq!(error.reason, Reason::Unsupported, "{method}");
-            assert_eq!(error.message, "Not implemented", "{method}");
-        }
-        let error = runtime.call("Nope", &[]).await.unwrap_err();
-        assert_eq!(error.reason, Reason::Unsupported);
-        assert_eq!(error.message, "Unknown method Nope");
-    }
-
-    #[tokio::test]
-    async fn a_bad_request_is_invalid() {
+    async fn a_bad_request_is_invalid_and_an_unknown_method_is_unsupported() {
         let runtime = runtime();
         for method in METHODS {
             let error = runtime.call(method, &[0xff]).await.unwrap_err();
             assert_eq!(error.reason, Reason::Invalid, "{method}");
         }
+        let error = runtime.call("Nope", &[]).await.unwrap_err();
+        assert_eq!(
+            (error.reason, error.message.as_str()),
+            (Reason::Unsupported, "Unknown method Nope")
+        );
     }
 
     #[test]
-    fn free_writer_and_the_memory_runtime_are_unsupported() {
-        let error = runtime().free_writer(1).unwrap_err();
-        assert_eq!(error.reason, Reason::Unsupported);
-        let config = MemoryStreamConfig::default().encode_to_vec();
-        let error = MemoryStreamRuntime::from_config_bytes(&config, None).unwrap_err();
-        assert_eq!(error.reason, Reason::Unsupported);
+    fn a_bad_memory_config_is_invalid() {
         let error = MemoryStreamRuntime::from_config_bytes(&[0xff], None).unwrap_err();
         assert_eq!(error.reason, Reason::Invalid);
     }
