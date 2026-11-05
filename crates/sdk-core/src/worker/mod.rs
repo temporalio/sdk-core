@@ -2388,7 +2388,7 @@ impl WorkerHeartbeatManager {
                         .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
-                    poller_target: heartbeat_manager_metrics
+                    target_pollers: heartbeat_manager_metrics
                         .wf_poller
                         .target
                         .load()
@@ -2409,7 +2409,7 @@ impl WorkerHeartbeatManager {
                         .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
-                    poller_target: heartbeat_manager_metrics
+                    target_pollers: heartbeat_manager_metrics
                         .wf_sticky_poller
                         .target
                         .load()
@@ -2430,7 +2430,7 @@ impl WorkerHeartbeatManager {
                         .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
-                    poller_target: heartbeat_manager_metrics
+                    target_pollers: heartbeat_manager_metrics
                         .act_poller
                         .target
                         .load()
@@ -2451,7 +2451,7 @@ impl WorkerHeartbeatManager {
                         .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
-                    poller_target: heartbeat_manager_metrics
+                    target_pollers: heartbeat_manager_metrics
                         .nexus_poller
                         .target
                         .load()

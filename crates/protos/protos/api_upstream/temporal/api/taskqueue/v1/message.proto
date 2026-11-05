@@ -38,7 +38,7 @@ message TaskQueueMetadata {
 message PollerScalingInfo {
     // Number of concurrent poll requests this worker is currently targeting for this task
     // queue and task type. 0 if unknown, such as a poller pool of fixed size.
-    int32 poller_target = 1;
+    int32 target_pollers = 1;
 }
 
 message TaskQueueVersioningInfo {

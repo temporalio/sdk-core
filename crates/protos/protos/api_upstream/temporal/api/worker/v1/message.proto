@@ -25,7 +25,7 @@ message WorkerPollerInfo {
 
   // Number of concurrent poll requests this poller pool is currently targeting, which may
   // differ from current_pollers. 0 if unknown, such as a poller pool of fixed size.
-  int32 poller_target = 4;
+  int32 target_pollers = 4;
 }
 
 message WorkerSlotsInfo {

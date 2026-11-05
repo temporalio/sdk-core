@@ -178,7 +178,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         } else {
             None
         };
-        let poll_fn = move |timeout_override: Option<Duration>, poller_target: Option<i32>| {
+        let poll_fn = move |timeout_override: Option<Duration>, target_pollers: Option<i32>| {
             let client = client.clone();
             let task_queue = task_queue.clone();
             let sticky_queue_name = sticky_queue.clone();
@@ -189,7 +189,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
                             task_queue,
                             no_retry,
                             timeout_override,
-                            poller_target,
+                            target_pollers,
                         },
                         PollWorkflowOptions { sticky_queue_name },
                     )
@@ -237,7 +237,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         } else {
             None
         };
-        let poll_fn = move |timeout_override: Option<Duration>, poller_target: Option<i32>| {
+        let poll_fn = move |timeout_override: Option<Duration>, target_pollers: Option<i32>| {
             let client = client.clone();
             let task_queue = task_queue.clone();
             async move {
@@ -247,7 +247,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
                             task_queue,
                             no_retry,
                             timeout_override,
-                            poller_target,
+                            target_pollers,
                         },
                         PollActivityOptions {
                             max_tasks_per_sec: options.max_tps,
@@ -296,7 +296,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         } else {
             None
         };
-        let poll_fn = move |timeout_override: Option<Duration>, poller_target: Option<i32>| {
+        let poll_fn = move |timeout_override: Option<Duration>, target_pollers: Option<i32>| {
             let client = client.clone();
             let task_queue = task_queue.clone();
             async move {
@@ -306,7 +306,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                             task_queue,
                             no_retry,
                             timeout_override,
-                            poller_target,
+                            target_pollers,
                         },
                         PollNexusOptions {
                             worker_commands_queue,
@@ -425,11 +425,11 @@ where
                         } else {
                             None
                         };
-                    let poller_target = report_handle.reportable_target();
+                    let target_pollers = report_handle.reportable_target();
                     let capabilities = capabilities.clone();
                     let poll_task = tokio::spawn(async move {
                         let r = if capabilities.graceful_poll_shutdown() {
-                            pf(timeout_override, poller_target).await
+                            pf(timeout_override, target_pollers).await
                         } else {
                             let poll_interruptor = shutdown.cancelled().then(|_| async move {
                                 if let Some(w) = poll_shutdown_interrupt_wait {
@@ -437,7 +437,7 @@ where
                                 }
                             });
                             tokio::select! {
-                                r = pf(timeout_override, poller_target) => r,
+                                r = pf(timeout_override, target_pollers) => r,
                                 _ = poll_interruptor => return,
                             }
                         };

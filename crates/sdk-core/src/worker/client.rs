@@ -444,7 +444,7 @@ pub struct PollOptions {
     /// Overrides the default RPC timeout for the poll request
     pub timeout_override: Option<Duration>,
     /// The pool's current scaling target. `None` for a fixed-size pool.
-    pub poller_target: Option<i32>,
+    pub target_pollers: Option<i32>,
 }
 /// Additional options specific to workflow task polling
 #[derive(Debug, Clone)]
@@ -498,8 +498,8 @@ impl WorkerClient for WorkerClientBag {
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
             poller_scaling_info: poll_options
-                .poller_target
-                .map(|poller_target| PollerScalingInfo { poller_target }),
+                .target_pollers
+                .map(|target_pollers| PollerScalingInfo { target_pollers }),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -541,8 +541,8 @@ impl WorkerClient for WorkerClientBag {
             worker_control_task_queue: self.worker_control_task_queue(),
             poller_group_id: Default::default(),
             poller_scaling_info: poll_options
-                .poller_target
-                .map(|poller_target| PollerScalingInfo { poller_target }),
+                .target_pollers
+                .map(|target_pollers| PollerScalingInfo { target_pollers }),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -1390,7 +1390,7 @@ mod tests {
                         task_queue: "application-queue".to_string(),
                         no_retry: None,
                         timeout_override: None,
-                        poller_target: None,
+                        target_pollers: None,
                     },
                     PollNexusOptions {
                         worker_commands_queue: false,
@@ -1404,7 +1404,7 @@ mod tests {
                         task_queue: "worker-command-queue".to_string(),
                         no_retry: None,
                         timeout_override: None,
-                        poller_target: None,
+                        target_pollers: None,
                     },
                     PollNexusOptions {
                         worker_commands_queue: true,
