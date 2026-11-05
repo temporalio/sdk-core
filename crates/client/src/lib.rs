@@ -137,6 +137,7 @@ use temporalio_common::{
         ActivitySerializationContext, DataConverter, SerializationContext,
         SerializationContextData, WorkflowSerializationContext,
     },
+    external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
     payload_visitor::decode_payloads,
     protos::{
         coresdk::IntoPayloadsExt,
@@ -1218,6 +1219,7 @@ impl Client {
             update,
             update_input,
             options,
+            UpdateWorkflowExecutionLifecycleStage::Accepted,
         )
         .await
     }
@@ -1441,6 +1443,7 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
         update: U,
         update_input: U::Input,
         options: WorkflowUpdateWithStartOptions,
+        wait_stage: UpdateWorkflowExecutionLifecycleStage,
     ) -> impl Future<Output = Result<WorkflowUpdateHandle<Self, U::Output>, WorkflowUpdateWithStartError>>
     where
         Self: Sized,
@@ -1808,9 +1811,9 @@ fn build_start_workflow_request(
     workflow_type: String,
     input: Option<Payloads>,
     memo: Option<ProtoMemo>,
+    user_metadata: Option<UserMetadata>,
     options: WorkflowStartOptions,
 ) -> StartWorkflowExecutionRequest {
-    let user_metadata = options.user_metadata();
     let request_eager_execution = options.enable_eager_workflow_start;
     StartWorkflowExecutionRequest {
         namespace: client.namespace(),
@@ -1900,14 +1903,26 @@ where
                             .await?;
                         let workflow_id = options.workflow_id.clone();
                         let memo = options.encoded_memo(&data_converter).await?;
+                        let user_metadata = options.encoded_user_metadata(&data_converter).await?;
                         let mut request = build_start_workflow_request(
                             &client,
                             workflow_type,
                             payloads.into_payloads(),
                             memo,
+                            user_metadata,
                             options,
-                        )
-                        .into_request();
+                        );
+                        let target = StoreTarget::workflow(
+                            &request.namespace,
+                            &request.workflow_id,
+                            "",
+                            request
+                                .workflow_type
+                                .as_ref()
+                                .map_or("", |workflow_type| workflow_type.name.as_str()),
+                        );
+                        store_external_payloads(&mut request, &data_converter, Some(target)).await?;
+                        let mut request = request.into_request();
                         rpc_options.apply_to(&mut request);
                         let run_id = client
                             .start_workflow_execution(request)
@@ -1998,11 +2013,13 @@ where
                             .await?;
                         let workflow_id = options.workflow_id.clone();
                         let memo = options.encoded_memo(&data_converter).await?;
+                        let user_metadata = options.encoded_user_metadata(&data_converter).await?;
                         let mut start_request = build_start_workflow_request(
                             &client,
                             workflow_type,
                             workflow_payloads.into_payloads(),
                             memo,
+                            user_metadata,
                             options,
                         );
                         if let Some(task_queue) = &mut start_request.task_queue {
@@ -2037,8 +2054,18 @@ where
                             priority: start_request.priority,
                             time_skipping_config: start_request.time_skipping_config,
                             ..Default::default()
-                        }
-                        .into_request();
+                        };
+                        let target = StoreTarget::workflow(
+                            &request.namespace,
+                            &request.workflow_id,
+                            "",
+                            request
+                                .workflow_type
+                                .as_ref()
+                                .map_or("", |workflow_type| workflow_type.name.as_str()),
+                        );
+                        store_external_payloads(&mut request, &data_converter, Some(target)).await?;
+                        let mut request = request.into_request();
                         rpc_options.apply_to(&mut request);
                         let run_id = WorkflowService::signal_with_start_workflow_execution(
                             &mut client,
@@ -2076,6 +2103,7 @@ where
         update: U,
         update_input: U::Input,
         options: WorkflowUpdateWithStartOptions,
+        wait_stage: UpdateWorkflowExecutionLifecycleStage,
     ) -> Result<WorkflowUpdateHandle<Self, U::Output>, WorkflowUpdateWithStartError>
     where
         W: HasWorkflowDefinition,
@@ -2146,12 +2174,24 @@ where
                         let namespace = client.namespace();
                         let workflow_id = start_options.workflow_id.clone();
                         let memo = start_options.encoded_memo(&data_converter).await?;
+                        let user_metadata =
+                            start_options.encoded_user_metadata(&data_converter).await?;
                         let start_request = build_start_workflow_request(
                             &client,
                             workflow_type,
                             workflow_payloads.into_payloads(),
                             memo,
+                            user_metadata,
                             start_options,
+                        );
+                        let target = StoreTarget::workflow(
+                            &namespace,
+                            &workflow_id,
+                            "",
+                            start_request
+                                .workflow_type
+                                .as_ref()
+                                .map_or("", |workflow_type| workflow_type.name.as_str()),
                         );
 
                         let update_id = update_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -2164,9 +2204,10 @@ where
                             update_name,
                             update_header,
                             update_payloads,
+                            wait_stage,
                         );
 
-                        let request = ExecuteMultiOperationRequest {
+                        let mut request = ExecuteMultiOperationRequest {
                             namespace,
                             operations: vec![
                                 execute_multi_operation_request::Operation {
@@ -2182,15 +2223,19 @@ where
                             ],
                             resource_id: workflow_id.clone(),
                         };
+                        store_external_payloads(&mut request, &data_converter, Some(target))
+                            .await?;
 
                         let (start_response, update_response) = loop {
                             let mut rpc_request = request.clone().into_request();
                             rpc_options.apply_to(&mut rpc_request);
-                            let response =
+                            let mut response =
                                 WorkflowService::execute_multi_operation(&mut client, rpc_request)
                                     .await
                                     .map_err(WorkflowUpdateWithStartError::from_status)?
                                     .into_inner();
+                            retrieve_external_payloads(&mut response, client.data_converter())
+                                .await?;
 
                             let [start_response, update_response]: [_; 2] =
                                 response.responses.try_into().map_err(|_| {
@@ -2271,6 +2316,7 @@ where
             update,
             update_input,
             options,
+            UpdateWorkflowExecutionLifecycleStage::Completed,
         )
         .await?;
         let result = update_handle
@@ -2358,12 +2404,17 @@ where
                                     }
                                     .into_request();
                                     input.rpc_options.apply_to(&mut request);
-                                    let response = WorkflowService::list_workflow_executions(
+                                    let mut response = WorkflowService::list_workflow_executions(
                                         &mut rpc_client,
                                         request,
                                     )
                                     .await?
                                     .into_inner();
+                                    retrieve_external_payloads(
+                                        &mut response,
+                                        rpc_client.data_converter(),
+                                    )
+                                    .await?;
                                     Ok(ListWorkflowsPageOutput::new(
                                         response.executions,
                                         response.next_page_token,
@@ -2497,57 +2548,59 @@ where
             (summary.is_some() || details.is_some()).then_some(UserMetadata { summary, details })
         };
 
+        let mut request = StartActivityExecutionRequest {
+            namespace: client.namespace(),
+            identity: client.identity(),
+            request_id: Uuid::new_v4().to_string(),
+            activity_id: options.id.clone(),
+            activity_type: Some(ActivityType {
+                name: activity.name().to_string(),
+            }),
+            task_queue: Some(TaskQueue {
+                name: options.task_queue,
+                kind: TaskQueueKind::Normal.into(),
+                normal_name: "".to_string(),
+            }),
+            schedule_to_close_timeout: try_into_or_box_err(
+                options.close_timeouts.schedule_to_close(),
+                StartActivityError::Other,
+            )?,
+            schedule_to_start_timeout: try_into_or_box_err(
+                options.schedule_to_start_timeout,
+                StartActivityError::Other,
+            )?,
+            start_to_close_timeout: try_into_or_box_err(
+                options.close_timeouts.start_to_close(),
+                StartActivityError::Other,
+            )?,
+            heartbeat_timeout: try_into_or_box_err(
+                options.heartbeat_timeout,
+                StartActivityError::Other,
+            )?,
+            retry_policy: options.retry_policy.map(Into::into),
+            input: dc.to_payloads(sc, &input).await?.into_payloads(),
+            id_reuse_policy: ProtoActivityIdReusePolicy::from(options.id_reuse_policy).into(),
+            id_conflict_policy: ProtoActivityIdConflictPolicy::from(options.id_conflict_policy)
+                .into(),
+            search_attributes: options.search_attributes.map(SearchAttributes::into_proto),
+            header: options.header,
+            user_metadata,
+            priority: Some(options.priority.into()),
+            start_delay: try_into_or_box_err(options.start_delay, StartActivityError::Other)?,
+            ..Default::default()
+        };
+        let target = StoreTarget::activity(
+            &request.namespace,
+            &request.activity_id,
+            "",
+            request
+                .activity_type
+                .as_ref()
+                .map_or("", |activity_type| activity_type.name.as_str()),
+        );
+        store_external_payloads(&mut request, dc, Some(target)).await?;
         let resp = client
-            .start_activity_execution(
-                StartActivityExecutionRequest {
-                    namespace: client.namespace(),
-                    identity: client.identity(),
-                    request_id: Uuid::new_v4().to_string(),
-                    activity_id: options.id.clone(),
-                    activity_type: Some(ActivityType {
-                        name: activity.name().to_string(),
-                    }),
-                    task_queue: Some(TaskQueue {
-                        name: options.task_queue,
-                        kind: TaskQueueKind::Normal.into(),
-                        normal_name: "".to_string(),
-                    }),
-                    schedule_to_close_timeout: try_into_or_box_err(
-                        options.close_timeouts.schedule_to_close(),
-                        StartActivityError::Other,
-                    )?,
-                    schedule_to_start_timeout: try_into_or_box_err(
-                        options.schedule_to_start_timeout,
-                        StartActivityError::Other,
-                    )?,
-                    start_to_close_timeout: try_into_or_box_err(
-                        options.close_timeouts.start_to_close(),
-                        StartActivityError::Other,
-                    )?,
-                    heartbeat_timeout: try_into_or_box_err(
-                        options.heartbeat_timeout,
-                        StartActivityError::Other,
-                    )?,
-                    retry_policy: options.retry_policy.map(Into::into),
-                    input: dc.to_payloads(sc, &input).await?.into_payloads(),
-                    id_reuse_policy: ProtoActivityIdReusePolicy::from(options.id_reuse_policy)
-                        .into(),
-                    id_conflict_policy: ProtoActivityIdConflictPolicy::from(
-                        options.id_conflict_policy,
-                    )
-                    .into(),
-                    search_attributes: options.search_attributes.map(SearchAttributes::into_proto),
-                    header: options.header,
-                    user_metadata,
-                    priority: Some(options.priority.into()),
-                    start_delay: try_into_or_box_err(
-                        options.start_delay,
-                        StartActivityError::Other,
-                    )?,
-                    ..Default::default()
-                }
-                .into_request(),
-            )
+            .start_activity_execution(request.into_request())
             .await?
             .into_inner();
 
@@ -3318,6 +3371,7 @@ mod tests {
             calls: usize,
             workflow_type: String,
             memo: Option<ProtoMemo>,
+            user_metadata: Option<UserMetadata>,
             payloads: Vec<Payload>,
             signal_name: String,
             signal_payloads: Vec<Payload>,
@@ -3409,6 +3463,7 @@ mod tests {
                 recorded.calls += 1;
                 recorded.workflow_type = request.workflow_type.unwrap().name;
                 recorded.memo = request.memo;
+                recorded.user_metadata = request.user_metadata;
                 recorded.payloads = request.input.unwrap_or_default().payloads;
                 recorded.identity = request.identity;
                 recorded.links = request.links;
@@ -3455,6 +3510,7 @@ mod tests {
                 recorded.calls += 1;
                 recorded.workflow_type = request.workflow_type.unwrap().name;
                 recorded.memo = request.memo;
+                recorded.user_metadata = request.user_metadata;
                 recorded.payloads = request.input.unwrap_or_default().payloads;
                 recorded.signal_name = request.signal_name;
                 recorded.signal_payloads = request.signal_input.unwrap_or_default().payloads;
@@ -3800,6 +3856,57 @@ mod tests {
             assert_eq!(
                 read_back(sent).await.get::<String>("memo-key").unwrap(),
                 Some("memo-value".to_owned())
+            );
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn start_workflow_encodes_user_metadata_with_codec(
+            #[values(false, true)] signal_with_start: bool,
+        ) {
+            let (client, recorded) = mock_client_with_codec(XorCodec);
+            let options = WorkflowStartOptions::new("task-queue", "workflow-id")
+                .static_summary("workflow summary".to_owned())
+                .static_details("workflow details".to_owned())
+                .build();
+            if signal_with_start {
+                client
+                    .signal_with_start_workflow(
+                        TestWorkflow::run,
+                        vec!["initial".to_owned()],
+                        TestWorkflow::test_signal,
+                        vec!["signal".to_owned()],
+                        options,
+                    )
+                    .await
+                    .unwrap();
+            } else {
+                client
+                    .start_workflow(TestWorkflow::run, vec!["initial".to_owned()], options)
+                    .await
+                    .unwrap();
+            }
+
+            let sent = recorded
+                .lock()
+                .user_metadata
+                .clone()
+                .expect("user metadata should be sent");
+            let converter = client.data_converter();
+            let context = SerializationContextData::Workflow(WorkflowSerializationContext::new());
+            assert_eq!(
+                converter
+                    .from_payload::<String>(&context, sent.summary.unwrap())
+                    .await
+                    .unwrap(),
+                "workflow summary"
+            );
+            assert_eq!(
+                converter
+                    .from_payload::<String>(&context, sent.details.unwrap())
+                    .await
+                    .unwrap(),
+                "workflow details"
             );
         }
 
@@ -4351,6 +4458,16 @@ mod tests {
         }
 
         impl WorkflowService for MockMultiOperationClient {
+            fn poll_workflow_execution_update(
+                &mut self,
+                _: Request<PollWorkflowExecutionUpdateRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<PollWorkflowExecutionUpdateResponse>, tonic::Status>,
+            > {
+                panic!("unexpected poll RPC: outcome was returned by execute_multi_operation");
+            }
+
             fn execute_multi_operation(
                 &mut self,
                 request: Request<ExecuteMultiOperationRequest>,
@@ -4414,6 +4531,7 @@ mod tests {
                     .update_header(update_header.clone())
                     .maybe_versioning_override(versioning_override.clone())
                     .build(),
+                    UpdateWorkflowExecutionLifecycleStage::Accepted,
                 )
                 .await
                 .unwrap();
@@ -4514,6 +4632,34 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn execute_update_with_start_requests_completion() {
+            let client = MockMultiOperationClient::new(Vec::new(), []);
+            let result = client
+                .execute_update_with_start_workflow(
+                    TestWorkflow,
+                    "workflow-input".to_owned(),
+                    TestUpdate,
+                    "update-input".to_owned(),
+                    update_with_start_options(WorkflowIdConflictPolicy::Fail),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result, "update-result");
+            assert_eq!(*client.call_count.lock(), 1);
+            let recorded = client.recorded.lock();
+            let Some(MultiOperationRequest::UpdateWorkflow(request)) =
+                &recorded.as_ref().unwrap().operations[1].operation
+            else {
+                panic!("expected update operation");
+            };
+            assert_eq!(
+                request.wait_policy.as_ref().unwrap().lifecycle_stage,
+                UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+            );
+        }
+
+        #[tokio::test]
         async fn update_with_start_retries_until_update_is_accepted() {
             let client = MockMultiOperationClient::new(
                 Vec::new(),
@@ -4535,6 +4681,7 @@ mod tests {
                     TestUpdate,
                     "update-input".to_owned(),
                     update_with_start_options(WorkflowIdConflictPolicy::Fail),
+                    UpdateWorkflowExecutionLifecycleStage::Accepted,
                 )
                 .await
                 .unwrap();
@@ -4569,6 +4716,7 @@ mod tests {
                         TestUpdate,
                         "update-input".to_owned(),
                         update_with_start_options(WorkflowIdConflictPolicy::Fail),
+                        UpdateWorkflowExecutionLifecycleStage::Accepted,
                     )
                     .await;
                 assert!(matches!(
@@ -4619,6 +4767,7 @@ mod tests {
                     TestUpdate,
                     "update-input".to_owned(),
                     update_with_start_options(WorkflowIdConflictPolicy::Fail),
+                    UpdateWorkflowExecutionLifecycleStage::Accepted,
                 )
                 .await
                 .unwrap();

@@ -1,9 +1,9 @@
 use crate::{
     abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
-    pollers::{Poller, PollerError, PollerResult},
+    pollers::{Poller, PollerError, PollerResult, StickyPollerShared},
     worker::{
         ActivitySlotKind, NamespaceCapabilities, NexusSlotKind, PollerBehavior, SlotKind,
-        WFTPollerShared, WorkflowSlotKind,
+        WorkflowSlotKind,
         client::{
             PollActivityOptions, PollNexusOptions, PollOptions, PollWorkflowOptions, WorkerClient,
         },
@@ -11,11 +11,7 @@ use crate::{
 };
 use backon::{BackoffBuilder, ExponentialBuilder};
 use crossbeam_utils::atomic::AtomicCell;
-use futures_util::{
-    FutureExt, Stream, StreamExt,
-    future::BoxFuture,
-    stream::{self, BoxStream},
-};
+use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use std::{
     cmp,
     fmt::Debug,
@@ -26,7 +22,6 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use sync_wrapper::SyncWrapper;
 use temporalio_client::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, jittered, request_extensions::NoRetryOnMatching,
 };
@@ -111,7 +106,7 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
 }
 
 pub(crate) struct WorkflowTaskOptions {
-    pub(crate) wft_poller_shared: Option<Arc<WFTPollerShared>>,
+    pub(crate) wft_poller_shared: Option<Arc<StickyPollerShared>>,
 }
 
 pub(crate) struct ActivityTaskOptions {
@@ -816,132 +811,6 @@ impl PollScalerReportHandle {
     }
 }
 
-type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
-type WorkflowTaskPollerStream = BoxStream<
-    'static,
-    PollerResult<(
-        PollWorkflowTaskQueueResponse,
-        OwnedMeteredSemPermit<WorkflowSlotKind>,
-    )>,
->;
-
-/// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
-pub(crate) struct WorkflowTaskPoller {
-    stream: SyncWrapper<WorkflowTaskPollerStream>,
-    normal_poller_rx: oneshot::Receiver<Box<PollWorkflowTaskBuffer>>,
-    sticky_poller_rx: Option<oneshot::Receiver<Box<PollWorkflowTaskBuffer>>>,
-}
-
-impl WorkflowTaskPoller {
-    pub(crate) fn new(
-        normal_poller: PollWorkflowTaskBuffer,
-        sticky_poller: Option<PollWorkflowTaskBuffer>,
-    ) -> Self {
-        let (normal_poller_tx, normal_poller_rx) = oneshot::channel();
-        let normal_stream = Self::streamify(normal_poller, normal_poller_tx, false);
-
-        let (combined_stream, sticky_poller_rx) = if let Some(sticky_poller) = sticky_poller {
-            let (sticky_poller_tx, sticky_poller_rx) = oneshot::channel();
-            let sticky_stream = Self::streamify(sticky_poller, sticky_poller_tx, true);
-            (
-                stream::select(normal_stream, sticky_stream).left_stream(),
-                Some(sticky_poller_rx),
-            )
-        } else {
-            (normal_stream.right_stream(), None)
-        };
-
-        // Each poller will send its own PollerStopped; we're suppressing that and sending a single
-        // one at the very end.
-        let stream = combined_stream
-            .filter(|r| future::ready(!matches!(r, Err(PollerError::PollerStopped))))
-            .chain(stream::once(future::ready(Err(PollerError::PollerStopped))))
-            .boxed()
-            .into();
-
-        Self {
-            stream,
-            normal_poller_rx,
-            sticky_poller_rx,
-        }
-    }
-
-    fn streamify<P, T>(
-        poller: P,
-        tx: oneshot::Sender<Box<P>>,
-        is_sticky: bool,
-    ) -> impl Stream<Item = PollerResult<T>>
-    where
-        P: Poller<T>,
-        T: Send + Sync + 'static,
-    {
-        struct State<P_> {
-            poller: Box<P_>,
-            tx: oneshot::Sender<Box<P_>>,
-            is_sticky: bool,
-        }
-        let state = State {
-            poller: Box::new(poller),
-            tx,
-            is_sticky,
-        };
-
-        stream::unfold(state, async |mut state| match state.poller.poll().await {
-            Some(r) => Some((r, state)),
-            None => {
-                if state.tx.send(state.poller).is_err() {
-                    Self::warn_channel_closed(state.is_sticky);
-                }
-                None
-            }
-        })
-    }
-
-    fn warn_channel_closed(is_sticky: bool) {
-        warn!(
-            "{} poller shutdown channel closed unexpectedly, worker might not shut down cleanly",
-            if is_sticky { "Sticky" } else { "Normal" }
-        );
-    }
-}
-
-#[async_trait::async_trait]
-impl
-    Poller<(
-        PollWorkflowTaskQueueResponse,
-        OwnedMeteredSemPermit<WorkflowSlotKind>,
-    )> for WorkflowTaskPoller
-{
-    async fn poll(
-        &mut self,
-    ) -> Option<
-        PollerResult<(
-            PollWorkflowTaskQueueResponse,
-            OwnedMeteredSemPermit<WorkflowSlotKind>,
-        )>,
-    > {
-        self.stream.get_mut().next().await
-    }
-
-    async fn shutdown(self) {
-        match self.normal_poller_rx.await {
-            Ok(p) => p.shutdown().await,
-            Err(_) => Self::warn_channel_closed(false),
-        }
-
-        if let Some(rx) = self.sticky_poller_rx {
-            match rx.await {
-                Ok(p) => p.shutdown().await,
-                Err(_) => Self::warn_channel_closed(true),
-            }
-        }
-    }
-
-    async fn shutdown_box(self: Box<Self>) {
-        self.shutdown().await;
-    }
-}
-
 /// Returns true for errors that the poller scaler wants to see
 fn poll_scaling_error_matcher(err: &tonic::Status) -> bool {
     matches!(
@@ -1051,7 +920,7 @@ impl PersistentPollErrorWarningState {
 mod tests {
     use super::*;
     use crate::{
-        abstractions::tests::fixed_size_permit_dealer, advance_fut,
+        abstractions::tests::fixed_size_permit_dealer, advance_fut, pollers::StickyTaskPoller,
         worker::client::mocks::mock_manual_worker_client,
     };
     use futures_util::FutureExt;
@@ -1084,7 +953,7 @@ mod tests {
             shutdown_token.clone(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
+                wft_poller_shared: Some(Arc::new(StickyPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities::default()),
@@ -1143,7 +1012,7 @@ mod tests {
             shutdown_token.clone(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
+                wft_poller_shared: Some(Arc::new(StickyPollerShared::new(Some(1)))),
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities::default()),
@@ -1221,7 +1090,7 @@ mod tests {
             shutdown_token.clone(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
+                wft_poller_shared: Some(Arc::new(StickyPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities::default()),
@@ -1337,7 +1206,7 @@ mod tests {
             shutdown_token.clone(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(INITIAL_POLLERS)))),
+                wft_poller_shared: Some(Arc::new(StickyPollerShared::new(Some(INITIAL_POLLERS)))),
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(NamespaceCapabilities::default()),
@@ -1545,6 +1414,59 @@ mod tests {
     }
 
     #[rstest]
+    #[case::scale_up_one(5, 1, true, 6)]
+    #[case::scale_up_multiple(5, 3, true, 8)]
+    #[case::scale_down_one(5, -1, true, 4)]
+    #[case::scale_down_multiple(6, -3, true, 3)]
+    #[case::scale_up_one_blocked(5, 1, false, 5)]
+    #[case::scale_up_multiple_blocked(5, 3, false, 5)]
+    #[case::scale_down_one_when_scale_up_blocked(5, -1, false, 4)]
+    #[case::scale_down_multiple_when_scale_up_blocked(6, -3, false, 3)]
+    #[case::clamp_to_maximum(5, 20, true, 10)]
+    #[case::clamp_to_minimum(5, -20, true, 2)]
+    #[case::at_maximum(10, 1, true, 10)]
+    #[case::at_minimum(2, -1, true, 2)]
+    #[case::zero(5, 0, true, 5)]
+    #[test]
+    fn scaling_decision_updates_target(
+        #[case] initial: usize,
+        #[case] delta: i32,
+        #[case] scale_up_allowed: bool,
+        #[case] expected: usize,
+    ) {
+        let handle = PollScalerReportHandle {
+            max: 10,
+            min: 2,
+            target: watch::channel(initial).0,
+            ever_saw_scaling_decision: AtomicBool::new(false),
+            capabilities: Arc::new(NamespaceCapabilities::default()),
+            behavior: PollerBehavior::Autoscaling {
+                minimum: 2,
+                maximum: 10,
+                initial,
+            },
+            ingested_this_period: Default::default(),
+            ingested_last_period: Default::default(),
+            scale_up_allowed: AtomicBool::new(scale_up_allowed),
+            last_successful_poll_time: Arc::new(AtomicCell::new(None)),
+            persistent_error_warning_state: Default::default(),
+            exponential_backoff: parking_lot::Mutex::new(TASK_POLL_BACKOFF.build()),
+            resource_exhausted_backoff: parking_lot::Mutex::new(THROTTLE_POLL_BACKOFF.build()),
+        };
+        let response = Ok(PollWorkflowTaskQueueResponse {
+            task_token: vec![1],
+            poller_scaling_decision: Some(PollerScalingDecision {
+                poll_request_delta_suggestion: delta,
+            }),
+            ..Default::default()
+        });
+
+        handle.poll_result(&response);
+
+        assert_eq!(*handle.target.borrow(), expected);
+    }
+
+    #[rstest]
     #[case::with_capability(true, 1, 1)]
     #[case::without_capability(false, 1, 10)]
     #[case::clamps_to_nonone_min(true, 3, 3)]
@@ -1628,9 +1550,9 @@ mod tests {
         }]);
 
         let mut poller = if sticky_ends_first {
-            WorkflowTaskPoller::new(second_poller, Some(first_poller))
+            StickyTaskPoller::new(second_poller, Some(first_poller))
         } else {
-            WorkflowTaskPoller::new(first_poller, Some(second_poller))
+            StickyTaskPoller::new(first_poller, Some(second_poller))
         };
 
         assert_matches!(poller.poll().await, Some(Err(PollerError::Tonic(e))) if e.message() == first_msg);
