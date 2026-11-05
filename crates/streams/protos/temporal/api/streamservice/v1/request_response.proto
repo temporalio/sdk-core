@@ -23,21 +23,21 @@ import "temporal/api/stream/v1/message.proto";
 // with the same request_id, gets created true. Each policy fails with CLOSED on a closed Stream,
 // EXPIRED on an expired one, and NOT_OWNER on one with another owner.
 // (-- api-linter: core::0133=disabled
-//     aip.dev/not-precedent: The request identifies a Stream by namespace and handle. --)
+//     aip.dev/not-precedent: The request identifies a Stream by namespace and ref. --)
 message CreateStreamRequest {
     string namespace = 1;
-    // The handle of the Stream to create. Its id is the Stream id, and is never empty. A bound
-    // Stream's handle has the owner's run chain as its owner.
-    temporal.api.stream.v1.StreamHandle stream_handle = 2;
+    // The ref of the Stream to create. Its id is the Stream id, and is never empty. A bound
+    // Stream's ref has the owner's run chain as its owner.
+    temporal.api.stream.v1.StreamRef stream_ref = 2;
     // The age after which a Record is dropped. Empty is the Store default.
     google.protobuf.Duration retention = 3;
     // Workflow only. The previous run on a retry run's first create, to withdraw its Records.
     string withdraw_run = 4;
     // The Workflow run that owns a bound Stream, with its run_id and a Workflow epoch. It needs a
-    // handle whose owner is the run's chain. Unset for a standalone Stream.
+    // ref whose owner is the run's chain. Unset for a standalone Stream.
     temporal.api.stream.v1.Producer owner = 5;
     // Only read by the server. When set, the server closes the Stream when the owner's run chain
-    // ends, also on a terminate or a timeout. It needs owner, and a handle with a Workflow owner.
+    // ends, also on a terminate or a timeout. It needs owner, and a ref with a Workflow owner.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "with" ties the close to the owner's run chain. --)
     bool close_with_run = 6;
@@ -56,8 +56,8 @@ message CreateStreamRequest {
 // Experimental. Might change in the future.
 // The Stream that a create made or got.
 message CreateStreamResponse {
-    // The handle, with the owner of a bound Stream.
-    temporal.api.stream.v1.StreamHandle handle = 1;
+    // The ref, with the owner of a bound Stream.
+    temporal.api.stream.v1.StreamRef ref = 1;
     // False when USE_EXISTING got a Stream that existed.
     bool created = 2;
 }
@@ -67,7 +67,7 @@ message CreateStreamResponse {
 // Producer, epoch and sequence, only once.
 message AppendRecordsRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamHandle handle = 2;
+    temporal.api.stream.v1.StreamRef ref = 2;
     // Required outside a Workflow. In a Workflow the transport sets it.
     temporal.api.stream.v1.Producer producer = 3;
     // The batch number in this epoch. With the Producer and epoch it is the dedupe key. Zero takes
@@ -105,7 +105,7 @@ message AppendRecordsResponse {
 // standalone Stream.
 message CloseStreamRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamHandle handle = 2;
+    temporal.api.stream.v1.StreamRef ref = 2;
     // The Producer that closes the Stream.
     temporal.api.stream.v1.Producer producer = 3;
     // Only read by the server. The run's last completed Workflow Task, as on the append.
@@ -128,7 +128,7 @@ message CloseStreamResponse {
 // Record, so readers long poll.
 message ReadRecordsRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamHandle handle = 2;
+    temporal.api.stream.v1.StreamRef ref = 2;
     // Start at this offset. Zero uses start. It fails with OFFSET_TOO_HIGH if it is past the newest
     // offset + 1.
     // (-- api-linter: core::0140::prepositions=disabled
@@ -187,7 +187,7 @@ message ReadRecordsResponse {
 // Gets the status, the newest offset and the Retention of a Stream.
 message DescribeStreamRequest {
     string namespace = 1;
-    temporal.api.stream.v1.StreamHandle handle = 2;
+    temporal.api.stream.v1.StreamRef ref = 2;
 }
 
 // Experimental. Might change in the future.

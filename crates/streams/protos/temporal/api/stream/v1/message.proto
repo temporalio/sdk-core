@@ -16,7 +16,7 @@ import "temporal/api/enums/v1/stream.proto";
 
 // Experimental. Might change in the future.
 // Identifies one Stream. The id is opaque to callers.
-message StreamHandle {
+message StreamRef {
     string id = 1;
     // Unset for a standalone Stream. For a Stream bound to a Workflow, business_id is the Workflow
     // ID and run_id is the first execution run id of its run chain. For a Standalone Activity,
@@ -24,7 +24,7 @@ message StreamHandle {
     // Workflow-owned Stream must carry its owner.
     temporal.api.common.v1.Execution owner = 2;
     // The name of the backend that holds the Stream, as the Worker and client config register
-    // it, so every process routes a handle it receives. Empty is the default backend. The Store
+    // it, so every process routes a ref it receives. Empty is the default backend. The Store
     // never reads it.
     string backend = 3;
 }
