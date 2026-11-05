@@ -86,6 +86,12 @@ relevant information.
   and could leave the workflow stuck on a nondeterminism error.
 * Workers now replay workflows paused before a scheduled task starts, allowing those workflows to
   make progress after unpause.
+* A local activity finishing while the SDK answers a query attached to the current workflow task
+  can no longer fail workflow tasks with `[TMPRL1100]` when any events, such as a signal, arrived
+  before the forced next task, leaving the workflow stuck. The failure came on the next full replay
+  (with the workflow cache disabled, the task after the forced one; otherwise after an eviction or
+  restart). Queried tasks after one that recorded no commands remain subject to
+  [#1737](https://github.com/temporalio/sdk-rust/issues/1737).
 
 ### Added
 * The C bridge's shared dev and test server options accept a startup timeout in milliseconds,
