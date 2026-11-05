@@ -10,21 +10,6 @@ option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Experimental. Might change in the future.
-// How a Stream closed, so a reader tells a terminated or timed out owner from a failed one
-// without parsing the failure.
-// (-- api-linter: core::0216::synonyms=disabled
-//     aip.dev/not-precedent: Named consistently with WorkflowExecutionStatus. --)
-enum StreamCloseStatus {
-    STREAM_CLOSE_STATUS_UNSPECIFIED = 0;
-    STREAM_CLOSE_STATUS_COMPLETED = 1;
-    STREAM_CLOSE_STATUS_FAILED = 2;
-    STREAM_CLOSE_STATUS_CANCELED = 3;
-    // TERMINATED and TIMED_OUT come only from the owner's end, never from a caller.
-    STREAM_CLOSE_STATUS_TERMINATED = 4;
-    STREAM_CLOSE_STATUS_TIMED_OUT = 5;
-}
-
-// Experimental. Might change in the future.
 // The state of a Stream, as a describe gives it.
 // (-- api-linter: core::0216::synonyms=disabled
 //     aip.dev/not-precedent: Named consistently with WorkflowExecutionStatus. --)

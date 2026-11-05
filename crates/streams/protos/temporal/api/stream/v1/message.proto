@@ -13,7 +13,6 @@ import "google/protobuf/timestamp.proto";
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/stream.proto";
-import "temporal/api/failure/v1/message.proto";
 
 // Experimental. Might change in the future.
 // Identifies one Stream. The id is opaque to callers.
@@ -131,30 +130,18 @@ message StreamData {
 }
 
 // Experimental. Might change in the future.
-// The close of a Stream. A Stream has at most one, and a read returns it last.
-message StreamClose {
-    // The Producer that closed the Stream.
-    Producer producer = 1;
-    temporal.api.common.v1.Payload result = 2;
-    temporal.api.failure.v1.Failure failure = 3;
-    // How the Stream closed, so a reader doesn't parse the failure.
-    temporal.api.enums.v1.StreamCloseStatus status = 4;
-}
-
-// Experimental. Might change in the future.
 // An offset is ordered and unique in one Stream, and it is sparse. Offsets have gaps, so they
 // don't count Records. Zero is never an offset. A read gives its Stream, so the read checks the
 // offset against that Stream.
 message StreamRecord {
     int64 offset = 1;
-    // A read item is a Record, a Superseded item or the close.
+    // A read item is a Record or a Superseded item. A close writes no item.
     oneof item {
         StreamData data = 2;
         // The Store keeps only the withdrawal facts of the first batch of a higher epoch. A read
         // builds this item from them. It withdraws the earlier Records that the facts match, and a
         // reader drops them.
         StreamSuperseded superseded = 3;
-        StreamClose close = 4;
     }
 }
 

@@ -14,9 +14,7 @@ option csharp_namespace = "Temporalio.Api.StreamService.V1";
 
 import "google/protobuf/duration.proto";
 
-import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/stream.proto";
-import "temporal/api/failure/v1/message.proto";
 import "temporal/api/stream/v1/message.proto";
 
 // Experimental. Might change in the future.
@@ -101,27 +99,23 @@ message AppendRecordsResponse {
 }
 
 // Experimental. Might change in the future.
-// Closes a Stream. Readers drain what is left, then end, and later appends fail with CLOSED. Only
-// the owner's run chain closes a bound Stream. Only a Workflow or a client closes a standalone
-// Stream.
+// Closes a Stream. Readers drain what is left, then end, and later appends fail with CLOSED. A
+// close writes no Record and carries no value, so code that has a last value publishes it first.
+// Only the owner's run chain closes a bound Stream. Only a Workflow or a client closes a
+// standalone Stream.
 message CloseStreamRequest {
     string namespace = 1;
     temporal.api.stream.v1.StreamHandle handle = 2;
     // The Producer that closes the Stream.
     temporal.api.stream.v1.Producer producer = 3;
-    temporal.api.common.v1.Payload result = 4;
-    // The close status comes from it. No failure is COMPLETED. A failure is CANCELED when it has
-    // canceled_failure_info, or when it is an Activity, child Workflow or Nexus Operation failure
-    // whose cause has canceled_failure_info. Any other failure is FAILED.
-    temporal.api.failure.v1.Failure failure = 5;
     // Only read by the server. The run's last completed Workflow Task, as on the append.
-    temporal.api.stream.v1.WorkflowTaskEpoch previous_completed_task = 6;
+    temporal.api.stream.v1.WorkflowTaskEpoch previous_completed_task = 4;
     // Only read by the server. The run's failed or timed out Workflow Tasks, as on the append.
-    repeated int64 failed_tasks = 7;
+    repeated int64 failed_tasks = 5;
     // Only read by the server. The previous run on a retry run's close, to withdraw its Records.
-    string withdraw_run = 8;
+    string withdraw_run = 6;
     // Only read by the server. It checks the token as on the append.
-    bytes task_token = 9;
+    bytes task_token = 7;
 }
 
 // Experimental. Might change in the future.
@@ -151,9 +145,8 @@ message ReadRecordsRequest {
     // How long to wait for a Stream that nobody created yet. Empty fails at once with NOT_FOUND.
     // At most 60 s.
     google.protobuf.Duration create_wait = 7;
-    // The exclusive end of the read. The read scans no entry at or after it, the close Record
-    // included, so a replay reads the same range. Zero means no end. Only the server serves it,
-    // and a Store refuses it.
+    // The exclusive end of the read. The read scans no entry at or after it, so a replay reads the
+    // same range. Zero means no end. Only the server serves it, and a Store refuses it.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "from" and "to" mark the ends of a range of offsets. --)
     int64 to_offset = 8;
@@ -182,7 +175,8 @@ message ReadRecordsResponse {
     repeated temporal.api.stream.v1.StreamRecord records = 1;
     // The from_offset of the next read, which is the newest offset read + 1.
     int64 next_offset = 2;
-    // True after the close. No later read gives an item.
+    // True when the Stream is closed and this read gave its last item. A read of a closed Stream
+    // with no item left answers at once.
     bool done = 3;
     // This reader's floor keeps more than half of the Stream's byte cap. The writer fails when the
     // cap fills, and only the reader's continue-as-new frees it. Only set by the server.
@@ -200,8 +194,7 @@ message DescribeStreamRequest {
 // The state of a Stream.
 message DescribeStreamResponse {
     temporal.api.enums.v1.StreamStatus status = 1;
-    // The newest offset, of a Record, a Superseded item or the close. Zero when the Stream has
-    // none.
+    // The newest offset, of a Record or a Superseded item. Zero when the Stream has none.
     int64 last_offset = 2;
     google.protobuf.Duration retention = 3;
 }
