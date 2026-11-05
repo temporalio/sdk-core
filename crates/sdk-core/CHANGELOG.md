@@ -33,6 +33,14 @@ relevant information.
 
 ## Unreleased
 
+### Added
+* A local activity's `ActivityTask.Start` has `workflow_task` (field 21), with the started event
+  id, attempt and start time of the workflow task in which Core dispatched it. `workflow_task`
+  also has `previous_started_event_id`, `previous_attempt` and `previous_started_time`, which
+  name the run's last completed workflow task, and `failed_tasks`, the started event ids of the
+  run's last 100 failed or timed out workflow tasks. Retries that Core runs locally keep the
+  value. Core leaves it unset for other activities.
+
 ### Security
 * Ephemeral server downloads now use `zip` 9.0 for ZIP extraction, replacing the 8.x dependency
   [yanked upstream for security issues](https://github.com/zip-rs/zip2/issues/1075#issuecomment-6209381974).
@@ -45,6 +53,11 @@ relevant information.
   nondeterminism while retaining compatibility with histories recorded before these checks.
 
 ### Fixed
+* A workflow task failure reported with the cause `WORKFLOW_TASK_FAILED_CAUSE_EXTERNAL_STORAGE_FAILURE`
+  is now counted on `workflow_task_execution_failed` with `failure_reason="ExternalStorageError"`,
+  matching activity failures with the storage cause. It was previously counted as `WorkflowError`.
+* Ephemeral dev and test servers now complete the automatic port reservation handshake on Linux
+  and macOS before starting, preventing intermittent address-in-use errors during TCP teardown.
 * Resource-based worker tuners now read CPU usage and quotas from standard cgroup v1 mounts. Workers
   on cgroup v1 systems no longer fall back to host CPU usage and admit work based on understated
   container load.
