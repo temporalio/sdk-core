@@ -84,12 +84,15 @@ enum StreamErrorReason {
     STREAM_ERROR_REASON_TOO_LARGE = 10;
     // The request is malformed. INVALID_ARGUMENT.
     STREAM_ERROR_REASON_INVALID = 11;
-    // The Store failed, did not answer, or gave back data that isn't valid. UNAVAILABLE.
-    STREAM_ERROR_REASON_STORAGE = 12;
+    // The Store failed or did not answer. A retry can succeed. UNAVAILABLE.
+    STREAM_ERROR_REASON_STORAGE_UNAVAILABLE = 12;
     // No writer has the id. The SDK's in-process writer only. NOT_FOUND.
     STREAM_ERROR_REASON_UNKNOWN_WRITER = 13;
     // The Store lacks a capability that the call needs. UNIMPLEMENTED.
     STREAM_ERROR_REASON_UNSUPPORTED = 14;
     // A create with the FAIL conflict policy is for a Stream that exists. ALREADY_EXISTS.
     STREAM_ERROR_REASON_ALREADY_EXISTS = 15;
+    // The Store gave back data that isn't valid, such as a stored value with the wrong length. A
+    // retry reads the same data. DATA_LOSS.
+    STREAM_ERROR_REASON_STORAGE_CORRUPT = 16;
 }

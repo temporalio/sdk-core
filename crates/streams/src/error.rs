@@ -36,14 +36,16 @@ pub enum Reason {
     TooLarge,
     /// The request is malformed.
     Invalid,
-    /// The Store failed, did not answer, or gave back data that isn't valid.
-    Storage,
+    /// The Store failed or did not answer. A retry can succeed.
+    StorageUnavailable,
     /// No writer has the id.
     UnknownWriter,
     /// The Store lacks a capability that the call needs.
     Unsupported,
     /// A create that doesn't use an existing Stream names a Stream that exists.
     AlreadyExists,
+    /// The Store gave back data that isn't valid. A retry reads the same data.
+    StorageCorrupt,
 }
 
 impl Reason {
@@ -62,10 +64,11 @@ impl Reason {
             Reason::OffsetTooHigh => "stream_offset_too_high",
             Reason::TooLarge => "stream_too_large",
             Reason::Invalid => "stream_invalid",
-            Reason::Storage => "stream_storage",
+            Reason::StorageUnavailable => "stream_storage_unavailable",
             Reason::UnknownWriter => "stream_unknown_writer",
             Reason::Unsupported => "stream_unsupported",
             Reason::AlreadyExists => "stream_already_exists",
+            Reason::StorageCorrupt => "stream_storage_corrupt",
         }
     }
 
@@ -83,10 +86,11 @@ impl Reason {
             Reason::OffsetTooHigh => StreamErrorReason::OffsetTooHigh,
             Reason::TooLarge => StreamErrorReason::TooLarge,
             Reason::Invalid => StreamErrorReason::Invalid,
-            Reason::Storage => StreamErrorReason::Storage,
+            Reason::StorageUnavailable => StreamErrorReason::StorageUnavailable,
             Reason::UnknownWriter => StreamErrorReason::UnknownWriter,
             Reason::Unsupported => StreamErrorReason::Unsupported,
             Reason::AlreadyExists => StreamErrorReason::AlreadyExists,
+            Reason::StorageCorrupt => StreamErrorReason::StorageCorrupt,
         }
     }
 
@@ -103,9 +107,10 @@ impl Reason {
             Reason::TooLarge | Reason::Invalid => Code::InvalidArgument,
             // A read from the offset works again once the Stream has Records up to it.
             Reason::OffsetTooHigh => Code::OutOfRange,
-            Reason::Storage => Code::Unavailable,
+            Reason::StorageUnavailable => Code::Unavailable,
             Reason::Unsupported => Code::Unimplemented,
             Reason::AlreadyExists => Code::AlreadyExists,
+            Reason::StorageCorrupt => Code::DataLoss,
         }
     }
 }
@@ -134,9 +139,14 @@ impl StreamError {
         Self::new(Reason::Invalid, message)
     }
 
-    /// A Store failure.
-    pub fn storage(message: impl Into<String>) -> Self {
-        Self::new(Reason::Storage, message)
+    /// A Store that failed or did not answer.
+    pub fn storage_unavailable(message: impl Into<String>) -> Self {
+        Self::new(Reason::StorageUnavailable, message)
+    }
+
+    /// Store data that isn't valid.
+    pub fn storage_corrupt(message: impl Into<String>) -> Self {
+        Self::new(Reason::StorageCorrupt, message)
     }
 
     /// The status code that lang raises the error with.
