@@ -30,8 +30,7 @@ use temporalio_common::{
         coresdk::{
             ActivityTaskCompletion,
             activity_result::{
-                self as activity_result, ActivityExecutionResult, ActivityTaskFailedCause,
-                activity_execution_result,
+                self as activity_result, ActivityExecutionResult, activity_execution_result,
             },
             nexus::{NexusTaskCompletion, nexus_task, nexus_task_completion},
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
@@ -44,7 +43,9 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::RetryPolicy,
-            enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowTaskFailedCause},
+            enums::v1::{
+                ActivityTaskFailedCause, NexusHandlerErrorRetryBehavior, WorkflowTaskFailedCause,
+            },
             failure::v1::Failure,
             nexus::{
                 self,
@@ -1284,8 +1285,14 @@ async fn nexus_metrics() {
         .unwrap();
 
     let nexus_polling = async {
-        for _ in 0..5 {
-            let nt = core_worker.poll_nexus_task().await.unwrap();
+        loop {
+            let nt = match core_worker.poll_nexus_task().await {
+                Ok(nt) => nt,
+                Err(err) => {
+                    assert_matches!(err, PollError::ShutDown);
+                    break;
+                }
+            };
             let task_token = nt.task_token().to_vec();
             let status = if matches!(nt.variant, Some(nexus_task::Variant::CancelTask(_))) {
                 nexus_task_completion::Status::AckCancel(true)
@@ -1358,11 +1365,6 @@ async fn nexus_metrics() {
                 .await
                 .unwrap();
         }
-        // Gotta get shutdown poll
-        assert_matches!(
-            core_worker.poll_nexus_task().await,
-            Err(PollError::ShutDown)
-        );
     };
 
     join!(nexus_polling, async {
@@ -2209,6 +2211,77 @@ async fn lang_reported_activity_failure_cause_reaches_metric() {
                     .find(|l| l.starts_with("temporal_activity_execution_failed{"))
                     .map(ToString::to_string)
                     .ok_or_else(|| anyhow!("activity_execution_failed metric not found"))
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        metric_line.contains("failure_reason=\"ExternalStorageError\""),
+        "Expected ExternalStorageError failure reason on metric, got: {metric_line}"
+    );
+}
+
+#[temporalio_macros::cloud_test_exclusion(crate::CloudTestExclusionReason::DoesNotUseServer)]
+#[tokio::test]
+async fn lang_reported_workflow_task_failure_cause_reaches_metric() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let meter = rt.telemetry().get_temporal_metric_meter().unwrap();
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(
+        temporalio_common::protos::temporal::api::enums::v1::EventType::WorkflowExecutionStarted,
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock_worker_client(),
+    );
+    mh.num_expected_fails = 1;
+    mh.num_expected_completions = Some(0.into());
+
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    mock.set_temporal_meter(meter);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "storage exploded".into(),
+        Some(WorkflowTaskFailedCause::ExternalStorageFailure),
+    ))
+    .await
+    .unwrap();
+    core.handle_eviction().await;
+
+    // The reported WFT failure evicts the run. Consume the replayed activation so the worker can
+    // shut down cleanly without an outstanding workflow task.
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "storage exploded".into(),
+        Some(WorkflowTaskFailedCause::ExternalStorageFailure),
+    ))
+    .await
+    .unwrap();
+    core.drain_pollers_and_shutdown().await;
+
+    let metric_line = eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                body.lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_failed{"))
+                    .map(ToString::to_string)
+                    .ok_or_else(|| anyhow!("wf_task_execution_failed metric not found"))
             }
         },
         Duration::from_secs(5),

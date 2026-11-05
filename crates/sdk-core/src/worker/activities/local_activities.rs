@@ -26,7 +26,9 @@ use temporalio_common::protos::{
     coresdk::{
         LocalActivitySlotInfo,
         activity_result::{Cancellation, Failure as ActFail, Success},
-        activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
+        activity_task::{
+            ActivityCancelReason, ActivityTask, Start, WorkflowTaskAttempt, activity_task,
+        },
     },
     temporal::api::{
         common::v1::WorkflowExecution,
@@ -139,6 +141,8 @@ pub(crate) struct NewLocalAct {
     pub(crate) workflow_type: String,
     pub(crate) workflow_exec_info: WorkflowExecution,
     pub(crate) schedule_time: SystemTime,
+    /// The workflow task in which the run dispatched this request. Retries reuse it.
+    pub(crate) workflow_task: Option<WorkflowTaskAttempt>,
 }
 
 impl Debug for NewLocalAct {
@@ -640,6 +644,8 @@ impl LocalActivityManager {
                     priority: Some(Default::default()),
                     is_local: true,
                     run_id: String::new(),
+                    propagated_nexus_serialization_context: None,
+                    workflow_task: new_la.workflow_task,
                 })),
             }));
         }
@@ -1176,6 +1182,7 @@ mod tests {
                 workflow_type: "".to_string(),
                 workflow_exec_info: Default::default(),
                 schedule_time: SystemTime::now(),
+                workflow_task: None,
             }
             .into()
         }));
@@ -1215,6 +1222,7 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1241,6 +1249,7 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1279,6 +1288,7 @@ mod tests {
                     run_id: run_id.to_string(),
                 },
                 schedule_time: SystemTime::now(),
+                workflow_task: None,
             }
             .into(),
             NewLocalAct {
@@ -1293,6 +1303,7 @@ mod tests {
                     run_id: other_run_id.to_string(),
                 },
                 schedule_time: SystemTime::now(),
+                workflow_task: None,
             }
             .into(),
         ]);
@@ -1329,6 +1340,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
         lam.next_pending().await.unwrap().unwrap();
@@ -1356,6 +1368,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
         let start = lam.next_pending().await.unwrap().unwrap();
@@ -1403,6 +1416,7 @@ mod tests {
                 run_id: run_id.to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         };
         lam.enqueue([new_la(1, "run_id").into(), new_la(2, "run_id").into()]);
         // Holds the only permit, so the second LA stays queued behind it
@@ -1475,6 +1489,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
         let start = lam.next_pending().await.unwrap().unwrap();
@@ -1531,6 +1546,7 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1566,6 +1582,7 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1614,6 +1631,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1664,6 +1682,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1702,6 +1721,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1746,6 +1766,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         }
         .into()]);
 
@@ -1789,6 +1810,7 @@ mod tests {
                 run_id: "run_id".to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         };
         lam.enqueue([new_la.clone().into(), new_la.into()]);
     }
@@ -1815,6 +1837,7 @@ mod tests {
                 run_id: run_id.to_string(),
             },
             schedule_time: SystemTime::now(),
+            workflow_task: None,
         };
         lam.enqueue([new_la.clone().into()]);
         let spinfail = || async {

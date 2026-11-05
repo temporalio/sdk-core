@@ -51,15 +51,102 @@ pub trait PayloadVisitable: Send {
     ) -> BoxFuture<'a, Result<(), PayloadConversionError>>;
 }
 
-/// Check if a field path represents search attributes that should not be encoded.
+/// Check if a field path represents search attributes that must not be transformed.
 /// Search attributes must remain server-readable for indexing.
 fn is_search_attributes_path(path: &str) -> bool {
     // All search attributes go through the SearchAttributes message which has indexed_fields
     path.contains("SearchAttributes.indexed_fields")
 }
 
-fn should_encode(path: &str) -> bool {
+/// Whether a field at this path may be transformed: encoded, decoded, or offloaded.
+pub(crate) fn should_transform(path: &str) -> bool {
     !is_search_attributes_path(path)
+}
+
+impl<'a> PayloadField<'a> {
+    /// The field's payloads, whichever form the field holds them in.
+    pub(crate) fn into_payloads_mut(self) -> &'a mut [Payload] {
+        match self.data {
+            PayloadFieldData::Single(payload) => std::slice::from_mut(payload),
+            PayloadFieldData::Repeated(payloads) => payloads,
+            PayloadFieldData::Payloads(message) => &mut message.payloads,
+        }
+    }
+}
+
+/// Lists a message's payload fields all at once, each borrowing a different part of the message,
+/// so a pass can transform them concurrently. Generated for every type that implements
+/// [`PayloadVisitable`].
+#[doc(hidden)]
+pub trait PayloadFieldCollectable {
+    /// Add every payload field in this message, including those of nested messages, to `fields`.
+    fn collect_payload_fields<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>);
+}
+
+/// The fields of a message that may be transformed: encoded, decoded, or offloaded.
+pub(crate) fn transformable_fields<M: PayloadFieldCollectable + ?Sized>(
+    msg: &mut M,
+) -> impl Iterator<Item = PayloadField<'_>> {
+    let mut fields = Vec::new();
+    msg.collect_payload_fields(&mut fields);
+    fields
+        .into_iter()
+        .filter(|field| should_transform(field.path))
+}
+
+pub(crate) fn visit_fields<'a, M: PayloadFieldCollectable + ?Sized>(
+    msg: &'a mut M,
+    visitor: &'a mut (dyn AsyncPayloadVisitor + Send),
+) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
+    let mut fields = Vec::new();
+    msg.collect_payload_fields(&mut fields);
+    Box::pin(async move {
+        for field in fields {
+            visitor.visit(field).await?;
+        }
+        Ok(())
+    })
+}
+
+/// Implement [`AsyncPayloadVisitor`] for a visitor that applies one batch operation to every
+/// transformable field, given `|visitor, payloads| body`. The body takes the field's payloads as an
+/// owned `Vec<Payload>` and evaluates to the payloads that replace them.
+macro_rules! payload_visitor {
+    ($visitor:ty, |$this:ident, $payloads:ident| $body:expr) => {
+        impl $crate::payload_visitor::AsyncPayloadVisitor for $visitor {
+            fn visit<'a>(
+                &'a mut self,
+                field: $crate::payload_visitor::PayloadField<'a>,
+            ) -> ::futures::future::BoxFuture<
+                'a,
+                Result<(), $crate::data_converters::PayloadConversionError>,
+            > {
+                Box::pin(async move {
+                    if !$crate::payload_visitor::should_transform(field.path) {
+                        return Ok(());
+                    }
+                    let $this = self;
+                    match field.data {
+                        $crate::payload_visitor::PayloadFieldData::Single(payload) => {
+                            let $payloads = vec![::std::mem::take(payload)];
+                            if let Some(p) = $body.into_iter().next() {
+                                *payload = p;
+                            }
+                        }
+                        $crate::payload_visitor::PayloadFieldData::Repeated(payloads) => {
+                            let $payloads = ::std::mem::take(payloads);
+                            *payloads = $body;
+                        }
+                        $crate::payload_visitor::PayloadFieldData::Payloads(message) => {
+                            let $payloads = ::std::mem::take(&mut message.payloads);
+                            message.payloads = $body;
+                        }
+                    }
+                    Ok(())
+                })
+            }
+        }
+    };
 }
 
 /// Visitor that encodes payloads using a codec.
@@ -68,42 +155,9 @@ pub struct EncodeVisitor<'a> {
     context: &'a SerializationContextData,
 }
 
-impl AsyncPayloadVisitor for EncodeVisitor<'_> {
-    fn visit<'a>(
-        &'a mut self,
-        field: PayloadField<'a>,
-    ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
-        Box::pin(async move {
-            if !should_encode(field.path) {
-                return Ok(());
-            }
-            match field.data {
-                PayloadFieldData::Single(payload) => {
-                    let encoded = self
-                        .codec
-                        .encode(self.context, vec![std::mem::take(payload)])
-                        .await?;
-                    if let Some(p) = encoded.into_iter().next() {
-                        *payload = p;
-                    }
-                }
-                PayloadFieldData::Repeated(payloads) => {
-                    *payloads = self
-                        .codec
-                        .encode(self.context, std::mem::take(payloads))
-                        .await?;
-                }
-                PayloadFieldData::Payloads(payloads_msg) => {
-                    payloads_msg.payloads = self
-                        .codec
-                        .encode(self.context, std::mem::take(&mut payloads_msg.payloads))
-                        .await?;
-                }
-            }
-            Ok(())
-        })
-    }
-}
+payload_visitor!(EncodeVisitor<'_>, |this, payloads| {
+    this.codec.encode(this.context, payloads).await?
+});
 
 /// Visitor that decodes payloads using a codec.
 pub struct DecodeVisitor<'a> {
@@ -111,42 +165,9 @@ pub struct DecodeVisitor<'a> {
     context: &'a SerializationContextData,
 }
 
-impl AsyncPayloadVisitor for DecodeVisitor<'_> {
-    fn visit<'a>(
-        &'a mut self,
-        field: PayloadField<'a>,
-    ) -> BoxFuture<'a, Result<(), PayloadConversionError>> {
-        Box::pin(async move {
-            if !should_encode(field.path) {
-                return Ok(());
-            }
-            match field.data {
-                PayloadFieldData::Single(payload) => {
-                    let decoded = self
-                        .codec
-                        .decode(self.context, vec![std::mem::take(payload)])
-                        .await?;
-                    if let Some(p) = decoded.into_iter().next() {
-                        *payload = p;
-                    }
-                }
-                PayloadFieldData::Repeated(payloads) => {
-                    *payloads = self
-                        .codec
-                        .decode(self.context, std::mem::take(payloads))
-                        .await?;
-                }
-                PayloadFieldData::Payloads(payloads_msg) => {
-                    payloads_msg.payloads = self
-                        .codec
-                        .decode(self.context, std::mem::take(&mut payloads_msg.payloads))
-                        .await?;
-                }
-            }
-            Ok(())
-        })
-    }
-}
+payload_visitor!(DecodeVisitor<'_>, |this, payloads| {
+    this.codec.decode(this.context, payloads).await?
+});
 
 /// Encode all payloads in a message using the given codec.
 pub async fn encode_payloads<M: PayloadVisitable + Send>(
@@ -202,6 +223,24 @@ impl PayloadVisitable for Payloads {
     }
 }
 
+impl PayloadFieldCollectable for Payload {
+    fn collect_payload_fields<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>) {
+        fields.push(PayloadField {
+            path: "temporal.api.common.v1.Payload",
+            data: PayloadFieldData::Single(self),
+        });
+    }
+}
+
+impl PayloadFieldCollectable for Payloads {
+    fn collect_payload_fields<'a>(&'a mut self, fields: &mut Vec<PayloadField<'a>>) {
+        fields.push(PayloadField {
+            path: "temporal.api.common.v1.Payloads",
+            data: PayloadFieldData::Payloads(self),
+        });
+    }
+}
+
 // Include the generated PayloadVisitable implementations
 include!(concat!(env!("OUT_DIR"), "/payload_visitor_impl.rs"));
 
@@ -236,7 +275,7 @@ mod tests {
             },
         },
     };
-    use futures::FutureExt;
+    use futures::{FutureExt, future};
     use std::{
         collections::HashMap,
         sync::atomic::{AtomicUsize, Ordering},
@@ -359,6 +398,47 @@ mod tests {
 
     fn is_decoded(p: &Payload) -> bool {
         p.metadata.contains_key("decoded")
+    }
+
+    #[tokio::test]
+    async fn test_fields_can_be_transformed_concurrently() {
+        let mut activation = WorkflowActivation {
+            jobs: vec![WorkflowActivationJob {
+                variant: Some(Variant::InitializeWorkflow(InitializeWorkflow {
+                    arguments: vec![make_payload("input")],
+                    headers: HashMap::from([("header".to_string(), make_payload("value"))]),
+                    memo: Some(Memo {
+                        fields: HashMap::from([("memo".to_string(), make_payload("memo-value"))]),
+                    }),
+                    ..Default::default()
+                })),
+            }],
+            ..Default::default()
+        };
+        let mut fields = Vec::new();
+        activation.collect_payload_fields(&mut fields);
+        // Every field waits for all the others, so this only finishes if they are in flight at once.
+        let barrier = tokio::sync::Barrier::new(fields.len());
+
+        future::join_all(fields.into_iter().map(|field| {
+            let barrier = &barrier;
+            async move {
+                barrier.wait().await;
+                for payload in field.into_payloads_mut() {
+                    payload
+                        .metadata
+                        .insert("encoded".to_string(), b"true".to_vec());
+                }
+            }
+        }))
+        .await;
+
+        let Some(Variant::InitializeWorkflow(init)) = &activation.jobs[0].variant else {
+            unreachable!()
+        };
+        assert!(is_encoded(&init.arguments[0]));
+        assert!(is_encoded(&init.headers["header"]));
+        assert!(is_encoded(&init.memo.as_ref().unwrap().fields["memo"]));
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ use std::{
 use temporalio_common::protos::{
     TaskToken,
     coresdk::{
+        activity_task::WorkflowTaskAttempt,
         common::ExternalStorageMetrics,
         workflow_activation::{
             RemoveFromCache, WorkflowActivation, query_to_job, remove_from_cache::EvictionReason,
@@ -194,6 +195,9 @@ impl ManagedRun {
         let is_incremental = work.is_incremental();
         let wft_info = WorkflowTaskInfo {
             attempt: work.attempt,
+            started_event_id: work.update.wft_started_id,
+            started_time: work.started_time,
+            previous_started_event_id: work.update.previous_wft_started_id,
             task_token: work.task_token,
             wf_id: work.execution.workflow_id.clone(),
         };
@@ -247,7 +251,8 @@ impl ManagedRun {
             if is_incremental {
                 self.metrics.sticky_cache_hit();
             }
-            self.wfm.new_work_from_server(work.update, work.messages)?
+            self.wfm
+                .new_work_from_server(work.update, work.messages, was_legacy_query)?
         } else {
             let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
@@ -277,17 +282,13 @@ impl ManagedRun {
                     // No activation needs to be sent to lang. We just need to wait for another
                     // heartbeat timeout or LAs to resolve
                     return Ok(None);
-                } else {
-                    panic!(
-                        "Got a new WFT while there are outstanding local activities, but there \
-                     was no waiting on LA info."
-                    )
                 }
-            } else {
-                return Ok(Some(ActivationOrAuto::Autocomplete {
-                    run_id: self.wfm.machines.run_id.clone(),
-                }));
             }
+            // Autocomplete dispatches enqueued LAs that could not start during query replay
+            // and establishes the normal LA heartbeat.
+            return Ok(Some(ActivationOrAuto::Autocomplete {
+                run_id: self.wfm.machines.run_id.clone(),
+            }));
         }
 
         Ok(Some(ActivationOrAuto::LangActivation(activation)))
@@ -786,7 +787,8 @@ impl ManagedRun {
             if !completion.activation_was_eviction && !self.am_broken {
                 self.wfm.apply_next_task_if_ready()?;
             }
-            let new_local_acts = self.wfm.drain_queued_local_activities();
+            let mut new_local_acts = self.wfm.drain_queued_local_activities();
+            self.stamp_dispatching_task(&mut new_local_acts);
             self.sink_la_requests(new_local_acts)?;
 
             if self.wfm.machines.outstanding_local_activity_count() == 0 {
@@ -1275,6 +1277,40 @@ impl ManagedRun {
         }
     }
 
+    /// Sets the current workflow task on each `LocalActRequest::New`. The activity can't find out
+    /// by itself which task dispatched it.
+    fn stamp_dispatching_task(&self, requests: &mut [LocalActRequest]) {
+        let Some(wft) = self.wft.as_ref() else {
+            if requests
+                .iter()
+                .any(|r| matches!(r, LocalActRequest::New(_)))
+            {
+                dbg_panic!("Local activities were dispatched with no workflow task");
+            }
+            return;
+        };
+        let previous_started_event_id = wft.info.previous_started_event_id;
+        let completed = self
+            .wfm
+            .machines
+            .completed_wft()
+            .filter(|c| c.started_event_id == previous_started_event_id);
+        let task = WorkflowTaskAttempt {
+            started_event_id: wft.info.started_event_id,
+            attempt: wft.info.attempt,
+            started_time: wft.info.started_time.map(Into::into),
+            previous_started_event_id,
+            failed_tasks: self.wfm.machines.failed_wft_started_ids(),
+            previous_attempt: completed.map_or(0, |c| c.attempt),
+            previous_started_time: completed.and_then(|c| c.started_time).map(Into::into),
+        };
+        for request in requests {
+            if let LocalActRequest::New(new_la) = request {
+                new_la.workflow_task = Some(task.clone());
+            }
+        }
+    }
+
     /// Pump some local activity requests into the sink, applying any immediate results to the
     /// workflow machines.
     fn sink_la_requests(
@@ -1504,8 +1540,10 @@ impl WorkflowManager {
         &mut self,
         update: HistoryUpdate,
         messages: Vec<IncomingProtocolMessage>,
+        preparing_legacy_query: bool,
     ) -> Result<WorkflowActivation> {
-        self.machines.new_work_from_server(update, messages)?;
+        self.machines
+            .new_work_from_server(update, messages, preparing_legacy_query)?;
         self.awaiting_next_wft = false;
         self.apply_deferred_local_resolutions()?;
         self.get_next_activation()
@@ -2015,7 +2053,9 @@ mod tests {
         use crate::{
             replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder},
             telemetry::metrics::MetricsContext,
-            test_help::{schedule_activity_cmd, schedule_local_activity_cmd, test_worker_cfg},
+            test_help::{
+                PollWFTRespExt, schedule_activity_cmd, schedule_local_activity_cmd, test_worker_cfg,
+            },
             worker::{
                 LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
                 workflow::{
@@ -2036,7 +2076,7 @@ mod tests {
                 },
                 workflow_commands::{
                     ActivityCancellationType, RequestCancelActivity, RequestCancelLocalActivity,
-                    workflow_command,
+                    UpdateResponse, update_response, workflow_command,
                 },
             },
             temporal::api::{
@@ -2157,6 +2197,89 @@ mod tests {
                 sdk_name: "test",
                 sdk_version: "test",
             })
+        }
+
+        #[rstest]
+        fn rejected_update_with_deferred_la_result(#[values(false, true)] before_task: bool) {
+            let mut history = TestHistoryBuilder::default();
+            history.add_by_type(EventType::WorkflowExecutionStarted);
+            history.add_workflow_task_scheduled_and_started();
+            let mut live = manager(&history);
+            live.get_next_activation().unwrap();
+            let workflow_command::Variant::ScheduleLocalActivity(command) =
+                schedule_local_activity_cmd(
+                    1,
+                    "local",
+                    ActivityCancellationType::TryCancel,
+                    Duration::from_secs(10),
+                )
+            else {
+                unreachable!()
+            };
+            live.push_commands_and_iterate(vec![WFCommand::new(
+                WFCommandVariant::AddLocalActivity(command),
+            )])
+            .unwrap();
+            live.drain_queued_local_activities();
+            live.wft_completion_reported();
+            let mut result = Some(LocalResolution::LocalActivity(LocalActivityResolution {
+                seq: 1,
+                result: LocalActivityExecutionResult::Completed(Success {
+                    result: Some("done".as_json_payload().unwrap()),
+                }),
+                runtime: Duration::ZERO,
+                attempt: 1,
+                backoff: None,
+                original_schedule_time: None,
+            }));
+            if before_task {
+                live.notify_of_local_result(result.take().unwrap()).unwrap();
+            }
+            history.add_workflow_task_completed();
+            history.add_workflow_task_scheduled_and_started();
+            let mut task = history
+                .get_full_history_info()
+                .unwrap()
+                .as_poll_wft_response();
+            task.add_update_request("update", task.started_event_id - 1);
+            let activation = live
+                .new_work_from_server(
+                    history.get_full_history_info().unwrap().into(),
+                    task.messages
+                        .into_iter()
+                        .map(|message| message.try_into().unwrap())
+                        .collect(),
+                    false,
+                )
+                .unwrap();
+            assert!(activation.jobs.iter().any(|job| {
+                matches!(&job.variant, Some(Variant::DoUpdate(update)) if update.run_validator)
+            }));
+            let mut commands = vec![WFCommand::new(WFCommandVariant::UpdateResponse(
+                UpdateResponse {
+                    protocol_instance_id: "update".to_owned(),
+                    response: Some(update_response::Response::Rejected(Default::default())),
+                },
+            ))];
+            if before_task {
+                assert!(activation.jobs.iter().any(|job| {
+                    matches!(&job.variant, Some(Variant::ResolveActivity(result)) if result.is_local)
+                }));
+            } else {
+                assert_eq!(activation.jobs.len(), 1);
+                live.notify_of_local_result(result.take().unwrap()).unwrap();
+                live.push_commands_and_iterate(commands).unwrap();
+                let activation = live.get_next_activation().unwrap();
+                assert_matches!(
+                    activation.jobs[0].variant,
+                    Some(Variant::ResolveActivity(_))
+                );
+                commands = vec![];
+            }
+            commands.push(WFCommand::new(WFCommandVariant::CompleteWorkflow(
+                Default::default(),
+            )));
+            live.push_commands_and_iterate(commands).unwrap();
         }
 
         #[rstest]
@@ -2462,6 +2585,7 @@ mod tests {
                             .new_work_from_server(
                                 history.get_one_wft(wft_number).unwrap().into(),
                                 vec![],
+                                false,
                             )
                             .unwrap();
                         if activation.jobs.is_empty() {

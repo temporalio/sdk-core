@@ -19,6 +19,7 @@ use temporalio_common::{
         DataConverter, PayloadConversionError, SerializationContextData, TemporalDeserializable,
         TemporalSerializable, WorkflowSerializationContext,
     },
+    external_storage::{StoreTarget, retrieve_external_payloads, store_external_payloads},
     payload_visitor::decode_payloads,
     protos::{
         coresdk::IntoPayloadsExt,
@@ -33,6 +34,26 @@ use temporalio_common::{
 };
 use tonic::IntoRequest;
 use uuid::Uuid;
+
+/// The payloads a schedule carries are inputs to the workflows it starts.
+fn schedule_store_target(
+    namespace: &str,
+    action: &schedule_proto::ScheduleAction,
+) -> Option<StoreTarget> {
+    match action.action.as_ref()? {
+        schedule_proto::schedule_action::Action::StartWorkflow(workflow) => {
+            Some(StoreTarget::workflow(
+                namespace,
+                &workflow.workflow_id,
+                "",
+                workflow
+                    .workflow_type
+                    .as_ref()
+                    .map_or("", |workflow_type| workflow_type.name.as_str()),
+            ))
+        }
+    }
+}
 
 /// Errors returned by schedule operations.
 #[derive(Debug, thiserror::Error)]
@@ -543,14 +564,17 @@ impl ScheduleDescriptionStartWorkflowAction {
         &self,
     ) -> Result<Option<T>, PayloadConversionError> {
         match &self.input {
-            Some(input) => self
-                .data_converter
-                .from_payloads(
-                    &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
-                    input.payloads.clone(),
-                )
-                .await
-                .map(Some),
+            Some(input) => {
+                let mut input = input.clone();
+                retrieve_external_payloads(&mut input, &self.data_converter).await?;
+                self.data_converter
+                    .from_payloads(
+                        &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                        input.payloads,
+                    )
+                    .await
+                    .map(Some)
+            }
             None => Ok(None),
         }
     }
@@ -1090,8 +1114,19 @@ where
         )
         .await?;
 
-        let mut resp = output.response;
-        if let Some(memo) = resp.memo.as_mut() {
+        self.description_from_response(output.response, &self.schedule_id)
+            .await
+    }
+
+    // The action's payloads are left as the server holds them so that an update can send them back
+    // untouched. `args()` retrieves and decodes them when they are read.
+    async fn description_from_response(
+        &self,
+        mut response: DescribeScheduleResponse,
+        schedule_id: &str,
+    ) -> Result<ScheduleDescription, ScheduleError> {
+        if let Some(memo) = response.memo.as_mut() {
+            retrieve_external_payloads(memo, self.client.data_converter()).await?;
             decode_payloads(
                 memo,
                 self.client.data_converter().codec(),
@@ -1099,12 +1134,7 @@ where
             )
             .await?;
         }
-
-        ScheduleDescription::new(
-            resp,
-            self.client.data_converter().clone(),
-            &self.schedule_id,
-        )
+        ScheduleDescription::new(response, self.client.data_converter().clone(), schedule_id)
     }
 
     /// Update the schedule definition.
@@ -1144,20 +1174,12 @@ where
                 let handle = self.clone();
                 move |input: UpdateScheduleInput| -> BoxFuture<'_, Result<(), ScheduleError>> {
                     Box::pin(async move {
-                        let mut response = handle
+                        let response = handle
                             .describe_raw(input.schedule_id.clone(), input.rpc_options.clone())
                             .await?;
-                        decode_payloads(
-                            &mut response,
-                            handle.client.data_converter().codec(),
-                            &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
-                        )
-                        .await?;
-                        let description = ScheduleDescription::new(
-                            response,
-                            handle.client.data_converter().clone(),
-                            &input.schedule_id,
-                        )?;
+                        let description = handle
+                            .description_from_response(response, &input.schedule_id)
+                            .await?;
                         let mut update = description.into_update();
                         updater(&mut update);
                         handle
@@ -1225,8 +1247,13 @@ where
         mut update: ScheduleUpdate,
         rpc_options: RpcOptions,
     ) -> Result<(), ScheduleError> {
+        // A retained action already went through storage when it was first sent, and storing it
+        // again would wrap its references in new ones.
         if let Some(action) = update.pending_action.take() {
-            update.schedule.action = Some(action.into_proto(self.client.data_converter()).await?);
+            let mut action = action.into_proto(self.client.data_converter()).await?;
+            let target = schedule_store_target(&self.namespace, &action);
+            store_external_payloads(&mut action, self.client.data_converter(), target).await?;
+            update.schedule.action = Some(action);
         }
         let mut request = UpdateScheduleRequest {
             namespace: self.namespace.clone(),
@@ -1514,8 +1541,15 @@ impl Client {
                             identity: client.identity(),
                             request_id: Uuid::new_v4().to_string(),
                             ..Default::default()
-                        }
-                        .into_request();
+                        };
+                        let target = request
+                            .schedule
+                            .as_ref()
+                            .and_then(|s| s.action.as_ref())
+                            .and_then(|a| schedule_store_target(&request.namespace, a));
+                        store_external_payloads(&mut request, client.data_converter(), target)
+                            .await?;
+                        let mut request = request.into_request();
                         options.rpc_options.apply_to(&mut request);
                         WorkflowService::create_schedule(&mut client, request).await?;
                         Ok(CreateScheduleOutput::new(input.schedule_id))
@@ -1590,10 +1624,15 @@ where
                                     }
                                     .into_request();
                                     input.rpc_options.apply_to(&mut request);
-                                    let response =
+                                    let mut response =
                                         WorkflowService::list_schedules(&mut rpc_client, request)
                                             .await?
                                             .into_inner();
+                                    retrieve_external_payloads(
+                                        &mut response,
+                                        rpc_client.data_converter(),
+                                    )
+                                    .await?;
                                     Ok(ListSchedulesPageOutput::new(
                                         response.schedules,
                                         response.next_page_token,
@@ -1659,7 +1698,7 @@ mod tests {
     use std::{
         collections::HashMap,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         time::SystemTime,
@@ -1667,7 +1706,8 @@ mod tests {
     use temporalio_common::{
         UntypedWorkflow,
         data_converters::{
-            DataConverter, DefaultFailureConverter, MultiArgs2, PayloadConverter, RawValue,
+            DataConverter, DefaultFailureConverter, ExternalStorageError, MultiArgs2,
+            PayloadConverter, RawValue,
         },
         protos::temporal::api::{
             common::v1::{
@@ -1687,6 +1727,14 @@ mod tests {
         },
     };
     use tonic::{Request, Response};
+    #[cfg(feature = "experimental")]
+    use {
+        futures_util::future::BoxFuture,
+        temporalio_common::data_converters::{
+            ExternalStorage, StorageDriver, StorageDriverClaim, StorageDriverError,
+            StorageDriverRetrieveContext, StorageDriverStoreContext,
+        },
+    };
 
     fn data_converter_with_codec() -> DataConverter {
         DataConverter::new(
@@ -1700,6 +1748,7 @@ mod tests {
     struct CapturedRequests {
         describe: AtomicUsize,
         update: AtomicUsize,
+        updated_schedule: Mutex<Option<Schedule>>,
         delete: AtomicUsize,
         patch: AtomicUsize,
         list: AtomicUsize,
@@ -1810,12 +1859,13 @@ mod tests {
 
         fn update_schedule(
             &mut self,
-            _request: Request<UpdateScheduleRequest>,
+            request: Request<UpdateScheduleRequest>,
         ) -> futures_util::future::BoxFuture<
             '_,
             Result<Response<UpdateScheduleResponse>, tonic::Status>,
         > {
             self.captured.update.fetch_add(1, Ordering::SeqCst);
+            *self.captured.updated_schedule.lock().unwrap() = request.into_inner().schedule;
             let should_error = self.should_error;
             async move {
                 if should_error {
@@ -2057,6 +2107,72 @@ mod tests {
         assert!(matches!(err, ScheduleError::PayloadConversion(_)));
         assert!(stream.next().await.is_none());
         assert_eq!(client.captured.list.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn schedule_update_preserves_encoded_action() {
+        let data_converter = data_converter_with_codec();
+        let encoded = data_converter
+            .to_payload(
+                &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                &"retained",
+            )
+            .await
+            .unwrap();
+        let mut response = describe_response_with_start_workflow(None);
+        let action = response.schedule.as_mut().unwrap().action.as_mut().unwrap();
+        let Some(schedule_proto::schedule_action::Action::StartWorkflow(info)) =
+            action.action.as_mut()
+        else {
+            panic!("expected start workflow");
+        };
+        info.input = Some(Payloads {
+            payloads: vec![encoded.clone()],
+        });
+        info.header = Some(common_proto::Header {
+            fields: [("_tracer-data".into(), encoded.clone())].into(),
+        });
+        info.memo = Some(Memo {
+            fields: [("action".into(), encoded.clone())].into(),
+        });
+        let expected = action.clone();
+        response.memo = Some(Memo {
+            fields: [("response".into(), encoded)].into(),
+        });
+        let client = MockScheduleClient {
+            data_converter,
+            describe_response: response,
+            ..Default::default()
+        };
+        let handle = make_schedule_handle(client.clone());
+        let description = handle.describe(RpcOptions::default()).await.unwrap();
+        assert_eq!(
+            description.memo().get::<String>("response").unwrap(),
+            Some("retained".into())
+        );
+        assert_eq!(
+            description.raw().schedule.as_ref().unwrap().action.as_ref(),
+            Some(&expected)
+        );
+        handle
+            .send_update(description.into_update(), RpcOptions::default())
+            .await
+            .unwrap();
+        {
+            let sent = client.captured.updated_schedule.lock().unwrap();
+            assert_eq!(sent.as_ref().unwrap().action.as_ref(), Some(&expected));
+        }
+        handle
+            .update(
+                |update| {
+                    update.set_note("changed");
+                },
+                RpcOptions::default(),
+            )
+            .await
+            .unwrap();
+        let sent = client.captured.updated_schedule.lock().unwrap();
+        assert_eq!(sent.as_ref().unwrap().action.as_ref(), Some(&expected));
     }
 
     #[tokio::test]
@@ -2567,6 +2683,270 @@ mod tests {
 
         let err = action.args::<i32>().await.unwrap_err();
         assert!(matches!(err, PayloadConversionError::EncodingError(_)));
+    }
+
+    fn storage_reference() -> Payload {
+        Payload {
+            metadata: HashMap::from([
+                ("encoding".to_owned(), b"json/protobuf".to_vec()),
+                (
+                    "messageType".to_owned(),
+                    b"temporal.api.sdk.v1.ExternalStorageReference".to_vec(),
+                ),
+            ]),
+            data: b"{}".to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn schedule_describe_leaves_argument_references_to_args() {
+        let reference = storage_reference();
+        let client = MockScheduleClient {
+            describe_response: describe_response_with_start_workflow(Some(Payloads {
+                payloads: vec![reference.clone()],
+            })),
+            ..Default::default()
+        };
+
+        let desc = make_schedule_handle(client)
+            .describe(RpcOptions::default())
+            .await
+            .unwrap();
+        let ScheduleDescriptionAction::StartWorkflow(action) = desc.action();
+
+        assert_eq!(action.raw_args().unwrap(), &[reference]);
+        assert!(matches!(
+            action.args::<String>().await.unwrap_err(),
+            PayloadConversionError::ExternalStorage(ExternalStorageError::NotConfigured)
+        ));
+    }
+
+    // A client without storage can still change a schedule whose arguments another client offloaded.
+    #[tokio::test]
+    async fn schedule_updates_send_argument_references_back_untouched() {
+        let client = MockScheduleClient {
+            describe_response: describe_response_with_start_workflow(Some(Payloads {
+                payloads: vec![storage_reference()],
+            })),
+            ..Default::default()
+        };
+        let expected = client
+            .describe_response
+            .schedule
+            .as_ref()
+            .unwrap()
+            .action
+            .clone();
+        let handle = make_schedule_handle(client.clone());
+
+        handle
+            .update(
+                |update| {
+                    update.set_note("changed");
+                },
+                RpcOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .captured
+                .updated_schedule
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .action,
+            expected
+        );
+
+        let description = handle.describe(RpcOptions::default()).await.unwrap();
+        handle
+            .send_update(description.into_update(), RpcOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .captured
+                .updated_schedule
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .action,
+            expected
+        );
+    }
+
+    #[cfg(feature = "experimental")]
+    #[derive(Clone, Default)]
+    struct CountingDriver {
+        stored: Arc<Mutex<Vec<Payload>>>,
+        retrieved: Arc<AtomicUsize>,
+    }
+
+    #[cfg(feature = "experimental")]
+    impl StorageDriver for CountingDriver {
+        fn name(&self) -> &str {
+            "counting"
+        }
+        fn driver_type(&self) -> &str {
+            "test.counting"
+        }
+        fn store(
+            &self,
+            _context: &StorageDriverStoreContext,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Result<Vec<StorageDriverClaim>, StorageDriverError>> {
+            let mut stored = self.stored.lock().unwrap();
+            let claims = payloads
+                .into_iter()
+                .map(|payload| {
+                    stored.push(payload);
+                    StorageDriverClaim::new(HashMap::from([(
+                        "index".to_owned(),
+                        (stored.len() - 1).to_string(),
+                    )]))
+                })
+                .collect();
+            Box::pin(async move { Ok(claims) })
+        }
+        fn retrieve(
+            &self,
+            _context: &StorageDriverRetrieveContext,
+            claims: Vec<StorageDriverClaim>,
+        ) -> BoxFuture<'static, Result<Vec<Payload>, StorageDriverError>> {
+            self.retrieved.fetch_add(claims.len(), Ordering::SeqCst);
+            let stored = self.stored.lock().unwrap();
+            let payloads = claims
+                .iter()
+                .map(|claim| stored[claim.claim_data["index"].parse::<usize>().unwrap()].clone())
+                .collect();
+            Box::pin(async move { Ok(payloads) })
+        }
+    }
+
+    // A threshold of one byte puts every payload, references included, over the threshold.
+    #[cfg(feature = "experimental")]
+    fn converter_storing_everything(driver: &CountingDriver) -> DataConverter {
+        DataConverter::default().with_external_storage(
+            ExternalStorage::new(Arc::new(driver.clone()))
+                .unwrap()
+                .with_payload_size_threshold(1),
+        )
+    }
+
+    #[cfg(feature = "experimental")]
+    #[tokio::test]
+    async fn schedule_updates_do_not_store_a_retained_action_again() {
+        let driver = CountingDriver::default();
+        let data_converter = converter_storing_everything(&driver);
+        let mut input = Payloads {
+            payloads: vec![
+                data_converter
+                    .to_payload(
+                        &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                        &"retained",
+                    )
+                    .await
+                    .unwrap(),
+            ],
+        };
+        store_external_payloads(&mut input, &data_converter, None)
+            .await
+            .unwrap();
+        let client = MockScheduleClient {
+            describe_response: describe_response_with_start_workflow(Some(input)),
+            data_converter,
+            ..Default::default()
+        };
+        let expected = client
+            .describe_response
+            .schedule
+            .as_ref()
+            .unwrap()
+            .action
+            .clone();
+        let handle = make_schedule_handle(client.clone());
+
+        handle
+            .update(
+                |update| {
+                    update.set_note("changed");
+                },
+                RpcOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .captured
+                .updated_schedule
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .action,
+            expected
+        );
+
+        let description = handle.describe(RpcOptions::default()).await.unwrap();
+        handle
+            .send_update(description.into_update(), RpcOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .captured
+                .updated_schedule
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .action,
+            expected
+        );
+
+        assert_eq!(driver.stored.lock().unwrap().len(), 1);
+        assert_eq!(driver.retrieved.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(feature = "experimental")]
+    #[tokio::test]
+    async fn schedule_update_stores_a_replacement_action() {
+        let driver = CountingDriver::default();
+        let client = MockScheduleClient {
+            data_converter: converter_storing_everything(&driver),
+            ..Default::default()
+        };
+
+        make_schedule_handle(client.clone())
+            .update(
+                |update| {
+                    update.set_action(ScheduleAction::start_workflow(
+                        UntypedWorkflow::new("MyWorkflow"),
+                        RawValue::from_value(&"replacement", &PayloadConverter::default()),
+                        "task-queue",
+                        "wf-id",
+                    ));
+                },
+                RpcOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let sent = client.captured.updated_schedule.lock().unwrap();
+        let Some(schedule_proto::schedule_action::Action::StartWorkflow(info)) =
+            &sent.as_ref().unwrap().action.as_ref().unwrap().action
+        else {
+            panic!("expected start workflow");
+        };
+        assert_eq!(
+            info.input.as_ref().unwrap().payloads[0].metadata["messageType"],
+            b"temporal.api.sdk.v1.ExternalStorageReference"
+        );
+        assert_eq!(driver.stored.lock().unwrap().len(), 1);
     }
 
     #[rstest::rstest]

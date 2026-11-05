@@ -36,7 +36,7 @@ fn generate_payload_visitor(
     File::open(descriptor_path)?.read_to_end(&mut descriptor_bytes)?;
     let descriptor_set = FileDescriptorSet::decode(&descriptor_bytes[..])?;
 
-    let model = PayloadModel::build(&descriptor_set);
+    let model = PayloadModel::build(&descriptor_set, false);
     let mut generator = PayloadVisitorGenerator {
         model,
         message_fields: HashMap::new(),
@@ -100,15 +100,20 @@ struct PayloadModel {
     checking: HashSet<String>,
     /// Types that have been checked and don't contain payloads
     not_payload_containing: HashSet<String>,
+    /// Whether `google.protobuf.Any` counts as payload-bearing. The limits validator needs it to, so
+    /// that an `Any` field reachable from a request has to be classified rather than skipped; the
+    /// visitor does not traverse into `Any`, so it keeps its own reachability unchanged.
+    any_is_payload: bool,
 }
 
 impl PayloadModel {
-    fn build(descriptor_set: &FileDescriptorSet) -> Self {
+    fn build(descriptor_set: &FileDescriptorSet, any_is_payload: bool) -> Self {
         let mut model = Self {
             messages: HashMap::new(),
             payload_containing: HashSet::new(),
             checking: HashSet::new(),
             not_payload_containing: HashSet::new(),
+            any_is_payload,
         };
         for file in &descriptor_set.file {
             let package = file.package.as_deref().unwrap_or("");
@@ -165,6 +170,10 @@ impl PayloadModel {
             return true;
         }
         if name == "temporal.api.common.v1.Payloads" {
+            self.payload_containing.insert(name.to_string());
+            return true;
+        }
+        if self.any_is_payload && name == "google.protobuf.Any" {
             self.payload_containing.insert(name.to_string());
             return true;
         }
@@ -376,14 +385,20 @@ impl PayloadVisitorGenerator {
 
         format!(
             r#"#[allow(deprecated, clippy::single_match, clippy::collapsible_match)]
+impl crate::payload_visitor::PayloadFieldCollectable for {rust_path} {{
+    fn collect_payload_fields<'a>(
+        &'a mut self,
+        fields: &mut Vec<crate::payload_visitor::PayloadField<'a>>,
+    ) {{
+{impl_body}    }}
+}}
+
 impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
     fn visit_payloads_mut<'a>(
         &'a mut self,
         visitor: &'a mut (dyn crate::payload_visitor::AsyncPayloadVisitor + Send),
     ) -> futures::future::BoxFuture<'a, Result<(), crate::data_converters::PayloadConversionError>> {{
-        Box::pin(async move {{
-{impl_body}            Ok(())
-        }})
+        crate::payload_visitor::visit_fields(self, visitor)
     }}
 }}
 "#,
@@ -404,10 +419,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::SinglePayload => {
                 format!(
                     r#"        if let Some(payload) = &mut self.{field} {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Single(payload),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -416,10 +431,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             }
             PayloadFieldKind::RepeatedPayload => {
                 format!(
-                    r#"        visitor.visit(crate::payload_visitor::PayloadField {{
+                    r#"        fields.push(crate::payload_visitor::PayloadField {{
             path: "{path}",
             data: crate::payload_visitor::PayloadFieldData::Repeated(&mut self.{field}),
-        }}).await?;
+        }});
 "#,
                     field = rust_field,
                     path = proto_path
@@ -428,10 +443,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::PayloadsMessage => {
                 format!(
                     r#"        if let Some(payloads) = &mut self.{field} {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Payloads(payloads),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -441,10 +456,10 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::MapPayload => {
                 format!(
                     r#"        for payload in self.{field}.values_mut() {{
-            visitor.visit(crate::payload_visitor::PayloadField {{
+            fields.push(crate::payload_visitor::PayloadField {{
                 path: "{path}",
                 data: crate::payload_visitor::PayloadFieldData::Single(payload),
-            }}).await?;
+            }});
         }}
 "#,
                     field = rust_field,
@@ -454,7 +469,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
             PayloadFieldKind::MapNestedMessage => {
                 format!(
                     r#"        for item in self.{field}.values_mut() {{
-            item.visit_payloads_mut(visitor).await?;
+            item.collect_payload_fields(fields);
         }}
 "#,
                     field = rust_field
@@ -474,7 +489,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 if is_field_repeated {
                     format!(
                         r#"        for item in &mut self.{field} {{
-            item.visit_payloads_mut(visitor).await?;
+            item.collect_payload_fields(fields);
         }}
 "#,
                         field = rust_field
@@ -482,7 +497,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 } else {
                     format!(
                         r#"        if let Some(msg) = &mut self.{field} {{
-            msg.visit_payloads_mut(visitor).await?;
+            msg.collect_payload_fields(fields);
         }}
 "#,
                         field = rust_field
@@ -506,7 +521,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 for variant in variants {
                     let variant_name = to_pascal_case(&variant.name);
                     arms.push_str(&format!(
-                        "                {enum_path}::{variant}(msg) => msg.visit_payloads_mut(visitor).await?,\n",
+                        "                {enum_path}::{variant}(msg) => msg.collect_payload_fields(fields),\n",
                         enum_path = enum_path,
                         variant = variant_name
                     ));
@@ -724,16 +739,9 @@ const TERMINAL_LEAVES: &[&str] = &[
     // The server size-checks a Failure as a whole proto (e.g. FailWorkflowExecution), so we measure
     // it as one unit rather than decomposing it into its inner payload fields.
     "temporal.api.failure.v1.Failure",
-];
-
-/// Field paths the server size-checks as a whole serialized sub-message even though the field is
-/// not itself payload-bearing — so payload-reachability never reaches them. Measured via
-/// `message_size` (the server's `proto.Size`), classified via the table like any other leaf. The
-/// owning message is forced into the validated closure so parents recurse into it.
-const EXTRA_WHOLE_MESSAGE_LEAVES: &[&str] = &[
-    // protocol Message body (google.protobuf.Any): the server blob-checks `proto.Size(message.Body)`
-    // when processing update messages and fails the WFT on exceed (handleMessage).
-    "temporal.api.protocol.v1.Message.body",
+    // An Any's contents are opaque here and may hold payloads, so every Any field must be classified
+    // like any other payload-bearing field; it is measured whole, like a Failure.
+    "google.protobuf.Any",
 ];
 
 // Payload-limits decision tables — THE source of truth for how the SDK mirrors the server's
@@ -758,7 +766,9 @@ const BLOB_FIELDS: &[&str] = &[
     "temporal.api.command.v1.StartChildWorkflowExecutionCommandAttributes.input",
     "temporal.api.command.v1.UpsertWorkflowSearchAttributesCommandAttributes.search_attributes", // indexed_fields data-sum
     "temporal.api.common.v1.Callback.NexusHandler.source_context",
-    "temporal.api.protocol.v1.Message.body", // whole Any body; see EXTRA_WHOLE_MESSAGE_LEAVES
+    // Whole Any body: the server blob-checks `proto.Size(message.Body)` when processing update
+    // messages and fails the WFT on exceed (handleMessage).
+    "temporal.api.protocol.v1.Message.body",
     "temporal.api.query.v1.WorkflowQuery.query_args",
     "temporal.api.workflow.v1.NewWorkflowExecutionInfo.input",
     "temporal.api.workflowservice.v1.RecordActivityTaskHeartbeatByIdRequest.details",
@@ -957,15 +967,7 @@ fn generate_payload_limits_validator(
     let descriptor_set = FileDescriptorSet::decode(&descriptor_bytes[..])?;
 
     // Reuse the visitor generator's message collection + payload reachability.
-    let mut model = PayloadModel::build(&descriptor_set);
-
-    // Force the owners of extra whole-message leaves to be treated as validatable, so the closure
-    // walk recurses into them (e.g. RespondWorkflowTaskCompletedRequest.messages -> Message.body).
-    for path in EXTRA_WHOLE_MESSAGE_LEAVES {
-        if let Some((owner, _)) = path.rsplit_once('.') {
-            model.payload_containing.insert(owner.to_string());
-        }
-    }
+    let model = PayloadModel::build(&descriptor_set, true);
 
     let table = load_payload_limits_table()?;
     let mut used_keys: HashSet<String> = HashSet::new();
@@ -1128,6 +1130,14 @@ fn classify_field(
         FieldShape::Map(value_type) => match value_type.as_str() {
             "temporal.api.common.v1.Payload" => Target::Leaf(LeafKind::MapPayload),
             "temporal.api.common.v1.Payloads" => Target::Leaf(LeafKind::MapPayloads),
+            // Skipping it would let an opaque, possibly payload-bearing field go unclassified, and no
+            // map of Any exists yet to decide how the server measures one.
+            "google.protobuf.Any" => panic!(
+                "payload-limits: map field `{}` in `{}` holds google.protobuf.Any values, which the \
+                 generator cannot measure yet; add a LeafKind for it",
+                field.name(),
+                parent_msg.name()
+            ),
             other => Target::Struct(StructShape::Map, other.to_string()),
         },
         FieldShape::Single(type_name) => match terminal_leaf_kind(&type_name, false) {
@@ -1142,7 +1152,7 @@ fn classify_field(
 }
 
 /// The leaf measurement kind for a `TERMINAL_LEAVES` type, or `None` for any other (recurse-into)
-/// message. `repeated` only changes Payload and Failure, the two that have a per-element form.
+/// message. `repeated` only changes Payload, Failure, and Any, the ones that have a per-element form.
 fn terminal_leaf_kind(type_name: &str, repeated: bool) -> Option<LeafKind> {
     Some(match type_name {
         "temporal.api.common.v1.Payload" if repeated => LeafKind::RepeatedPayload,
@@ -1153,6 +1163,8 @@ fn terminal_leaf_kind(type_name: &str, repeated: bool) -> Option<LeafKind> {
         "temporal.api.common.v1.SearchAttributes" => LeafKind::SingleSearchAttributes,
         "temporal.api.failure.v1.Failure" if repeated => LeafKind::RepeatedWholeMessage,
         "temporal.api.failure.v1.Failure" => LeafKind::WholeMessage,
+        "google.protobuf.Any" if repeated => LeafKind::RepeatedWholeMessage,
+        "google.protobuf.Any" => LeafKind::WholeMessage,
         _ => return None,
     })
 }
@@ -1246,26 +1258,6 @@ fn generate_limits_impl(
         };
         body.push_str(&format!(
             "        if let Some(oneof) = &self.{rust_field} {{\n            match oneof {{\n{arms}{catch_all}            }}\n        }}\n"
-        ));
-    }
-
-    // Extra whole-message leaves: non-payload fields the server size-checks as a sub-message.
-    for path in EXTRA_WHOLE_MESSAGE_LEAVES {
-        let Some((owner, field_name)) = path.rsplit_once('.') else {
-            continue;
-        };
-        if owner != proto_name {
-            continue;
-        }
-        let rust_field = to_snake_case(field_name);
-        body.push_str(&emit_leaf(
-            path,
-            field_name,
-            &rust_field,
-            LeafKind::WholeMessage,
-            table,
-            used_keys,
-            unclassified,
         ));
     }
 

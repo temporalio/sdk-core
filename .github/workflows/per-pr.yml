@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
+        os: [ubuntu-latest, ubuntu-arm, macos-arm, windows-latest]
         include:
           - os: windows-latest
             timeoutMinutes: 30
@@ -55,9 +55,6 @@ jobs:
             timeoutMinutes: 30
           - os: macos-arm
             runsOn: macos-14
-          - os: macos-intel
-            runsOn: macos-26-intel
-            timeoutMinutes: 40
     runs-on: ${{ matrix.runsOn || matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -141,11 +138,11 @@ jobs:
 
   integ-tests:
     name: Integ tests
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 30 || 25 }}
+    timeout-minutes: ${{ matrix.timeoutMinutes || (github.ref == 'refs/heads/main' && 30 || 25) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
+        os: [ubuntu-latest, ubuntu-arm, macos-arm, windows-latest]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -153,9 +150,6 @@ jobs:
             runsOn: ubuntu-24.04-arm64-2-core
           - os: macos-arm
             runsOn: macos-14
-          - os: macos-intel
-            runsOn: macos-26-intel
-            timeoutMinutes: 40
     runs-on: ${{ matrix.runsOn || matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -273,7 +267,7 @@ jobs:
         with:
           mise-install-args: protoc
       - name: Start container for otel-collector and prometheus
-        uses: hoverkraft-tech/compose-action@ee6af68587292d72db67743171809c19787df4c9 # v3.1.0
+        uses: hoverkraft-tech/compose-action@b659c744ee9bed25aea2307c017ad849bd104433 # v3.2.0
         with:
           compose-file: ./etc/docker/docker-compose-ci.yaml
       - run: cargo integ-test docker_
@@ -352,3 +346,36 @@ jobs:
 
       - name: Run C test program
         run: ./test
+
+  heavy-tests:
+    name: Heavy Tests
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    runs-on: ubuntu-latest-16-cores
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+        with:
+          mise-install-args: protoc
+      - run: cargo integ-test -c "--release" -t heavy_tests -- --test-threads 1
+
+  # The single required status check for merging: a PR can merge only if every job in
+  # `needs` passed.
+  required-pr-checks:
+    name: Required PR Checks
+    # Without always(), this job would be skipped when a dependency fails, and GitHub
+    # treats a skipped required check as passing.
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - build-and-lint
+      - test
+      - integ-tests
+      - c-bridge-static-link-test
+      - cloud-tests
+      - heavy-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any check failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1

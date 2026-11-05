@@ -33,11 +33,43 @@ relevant information.
 
 ## Unreleased
 
+### Added
+* A local activity's `ActivityTask.Start` has `workflow_task` (field 21), with the started event
+  id, attempt and start time of the workflow task in which Core dispatched it. `workflow_task`
+  also has `previous_started_event_id`, `previous_attempt` and `previous_started_time`, which
+  name the run's last completed workflow task, and `failed_tasks`, the started event ids of the
+  run's last 100 failed or timed out workflow tasks. Retries that Core runs locally keep the
+  value. Core leaves it unset for other activities.
+
+### Security
+* Ephemeral server downloads now use `zip` 9.0 for ZIP extraction, replacing the 8.x dependency
+  [yanked upstream for security issues](https://github.com/zip-rs/zip2/issues/1075#issuecomment-6209381974).
+
 ### Breaking Changes
+* Core now rejects activation responses with a nondeterminism error if the activation contained
+  only updates and the response rejects every update but also includes another workflow command.
+  SDKs must return only update rejections when all validators reject an update-only activation.
 * Replay detects changes to the service or operation of scheduled Nexus operations, reporting
   nondeterminism while retaining compatibility with histories recorded before these checks.
 
 ### Fixed
+* A workflow task failure reported with the cause `WORKFLOW_TASK_FAILED_CAUSE_EXTERNAL_STORAGE_FAILURE`
+  is now counted on `workflow_task_execution_failed` with `failure_reason="ExternalStorageError"`,
+  matching activity failures with the storage cause. It was previously counted as `WorkflowError`.
+* Ephemeral dev and test servers now complete the automatic port reservation handshake on Linux
+  and macOS before starting, preventing intermittent address-in-use errors during TCP teardown.
+* Resource-based worker tuners now read CPU usage and quotas from standard cgroup v1 mounts. Workers
+  on cgroup v1 systems no longer fall back to host CPU usage and admit work based on understated
+  container load.
+* Preserve queued queries across workflow eviction so requests for the same run are answered instead of silently dropped.
+* Dev and test server startup now stops waiting at the configured deadline even if a readiness
+  request stalls. Timeout messages include the last connection failure when available.
+* Workers with large workflow caches avoid unnecessary CPU usage when no workflow tasks are waiting
+  for a cache slot.
+* Rejection-only update tasks no longer dispatch local activities resumed from replay before
+  validation, allowing those tasks to remain unrecorded in workflow history.
+* Preparing a legacy query now remains in replay mode, preventing unrecorded local activity
+  attempts that could execute twice or leave the workflow stuck.
 * Worker heartbeats now report correct task-slot and poller counts when using buffered or custom
   metrics backends, including the Python SDK's `MetricBuffer`. Previously these counts could
   remain `0` because heartbeat accounting depended on reading labels from backend-owned attributes.
@@ -56,6 +88,12 @@ relevant information.
   make progress after unpause.
 
 ### Added
+* Client environment config profiles include the raw TOML tables under `profile.<name>.ext`,
+  keyed by extension name, for SDK envconfig extensions. Strict mode accepts any content under
+  `ext`. The C bridge's profile JSON includes them as an `ext` object, with TOML datetimes as
+  strings.
+* The C bridge's shared dev and test server options accept a startup timeout in milliseconds,
+  with zero selecting the five-second default.
 * The OTLP metrics exporter can export histograms as OpenTelemetry exponential histograms, which
   Prometheus-compatible backends store as native histograms, when an SDK enables the option,
   including through the C bridge. It applies to every histogram, including custom ones, and names

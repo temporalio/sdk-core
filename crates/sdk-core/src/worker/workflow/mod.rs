@@ -62,7 +62,7 @@ use std::{
     result,
     sync::{Arc, atomic, atomic::AtomicBool},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
@@ -1019,6 +1019,7 @@ struct WFTWithPaginator {
 struct PreparedWFT {
     task_token: TaskToken,
     attempt: u32,
+    started_time: Option<SystemTime>,
     execution: WorkflowExecution,
     workflow_type: String,
     legacy_query: Option<WorkflowQuery>,
@@ -1091,6 +1092,11 @@ pub(crate) enum OutstandingActivation {
 struct WorkflowTaskInfo {
     task_token: TaskToken,
     attempt: u32,
+    /// From the poll response.
+    started_event_id: i64,
+    started_time: Option<SystemTime>,
+    /// The started event id of the run's last completed task, from the poll response.
+    previous_started_event_id: i64,
     /// Exists to allow easy tagging of spans with workflow ids. Is duplicative of info inside the
     /// run machines themselves, but that can't be accessed easily. Would be nice to somehow have a
     /// shared repository, or refcounts, or whatever, for strings like these that get duped all
@@ -1362,6 +1368,15 @@ struct BufferedTasks {
 }
 
 impl BufferedTasks {
+    fn into_buffer_order(self) -> impl Iterator<Item = PermittedWFT> {
+        // BufferedTasks::buffer associates Queries with the preceding WFT. Preserve that
+        // association so a superseding WFT still invalidates only its own buffered Queries.
+        self.query_only_tasks
+            .into_iter()
+            .chain(self.wft)
+            .chain(self.query_only_tasks_for_buffered)
+    }
+
     /// Buffers a new task. If it is a query-only task, multiple such tasks may be buffered which
     /// all will be handled at the end of the current WFT. If a new WFT which would advance history
     /// is provided, it will be buffered - but if another such task comes in while there is already
@@ -1569,8 +1584,6 @@ impl ProtoCommandExt for ProtoCommand {
 #[derive(Debug, derive_more::From, derive_more::Display)]
 #[allow(clippy::large_enum_variant)]
 enum WFCommandVariant {
-    /// Returned when we need to wait for the lang sdk to send us something
-    NoCommandsFromLang,
     AddActivity(ScheduleActivity),
     AddLocalActivity(ScheduleLocalActivity),
     RequestCancelActivity(RequestCancelActivity),
@@ -1731,77 +1744,33 @@ pub(crate) enum WFMachinesError {
     Fatal(String),
 }
 
-/// Helper macro to create Nondeterminism errors with automatic assertion
+/// Helper macro to create Nondeterminism errors
 ///
 /// Usage: `nondeterminism!("Activity id mismatch: {} vs {}", id1, id2)`
 macro_rules! nondeterminism {
     ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        #[cfg(feature = "antithesis_assertions")]
-        $crate::antithesis::assert_unreachable!(
-            "Nondeterminism error detected",
-            ::serde_json::json!({
-                "error_message": &msg,
-                "error_type": "Nondeterminism",
-                "location": format!("{}:{}", file!(), line!())
-            })
-        );
-        WFMachinesError::Nondeterminism(msg)
+        WFMachinesError::Nondeterminism(format!($($arg)*))
     }};
 }
 pub(crate) use nondeterminism;
 
-/// Helper macro to create Fatal errors with automatic assertion
+/// Helper macro to create Fatal errors
 ///
 /// Usage: `fatal!("Invalid state transition: {:?}", state)`
 macro_rules! fatal {
     ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        #[cfg(feature = "antithesis_assertions")]
-        $crate::antithesis::assert_unreachable!(
-            "Fatal error detected",
-            ::serde_json::json!({
-                "error_message": &msg,
-                "error_type": "Fatal",
-                "location": format!("{}:{}", file!(), line!())
-            })
-        );
-        WFMachinesError::Fatal(msg)
+        WFMachinesError::Fatal(format!($($arg)*))
     }};
 }
 pub(crate) use fatal;
 
 impl WFMachinesError {
-    /// Create a new Nondeterminism error with assertion instrumentation
     pub(crate) fn nondeterminism(message: impl Into<String>) -> Self {
-        let msg = message.into();
-
-        #[cfg(feature = "antithesis_assertions")]
-        crate::antithesis::assert_unreachable!(
-            "Nondeterminism error detected",
-            ::serde_json::json!({
-                "error_message": msg,
-                "error_type": "Nondeterminism"
-            })
-        );
-
-        WFMachinesError::Nondeterminism(msg)
+        WFMachinesError::Nondeterminism(message.into())
     }
 
-    /// Create a new Fatal error with assertion instrumentation
     pub(crate) fn fatal(message: impl Into<String>) -> Self {
-        let msg = message.into();
-
-        #[cfg(feature = "antithesis_assertions")]
-        crate::antithesis::assert_unreachable!(
-            "Fatal error detected",
-            ::serde_json::json!({
-                "error_message": msg,
-                "error_type": "Fatal"
-            })
-        );
-
-        WFMachinesError::Fatal(msg)
+        WFMachinesError::Fatal(message.into())
     }
 
     fn evict_reason(&self) -> EvictionReason {
@@ -1995,10 +1964,17 @@ fn make_payloads_too_large_failure(violation: &PayloadLimitViolation) -> Failure
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        abstractions::tests::fixed_size_permit_dealer, replay::TestHistoryBuilder,
+        test_help::hist_to_poll_resp, worker::client::mocks::mock_worker_client,
+    };
     use itertools::Itertools;
     use temporalio_common::{
         payload_limits::{LimitClass, LimitSeverity},
-        protos::coresdk::workflow_activation::SignalWorkflow,
+        protos::{
+            coresdk::{WorkflowSlotInfo, workflow_activation::SignalWorkflow},
+            temporal::api::enums::v1::EventType,
+        },
     };
 
     #[test]
@@ -2135,5 +2111,71 @@ mod tests {
             ..Default::default()
         };
         prepare_to_ship_activation(&mut act);
+    }
+
+    async fn task(id: u32, query: bool) -> PermittedWFT {
+        let mut history = TestHistoryBuilder::default();
+        history.add_by_type(EventType::WorkflowExecutionStarted);
+        history.add_full_wf_task();
+        let mut response = hist_to_poll_resp(&history, "buffer-order", 1.into()).resp;
+        response.attempt = id as i32;
+        if query {
+            response.started_event_id = 0;
+            response.query = Some(WorkflowQuery::default());
+        }
+        let (paginator, work) = HistoryPaginator::from_poll(
+            validate_wft(response).unwrap(),
+            Arc::new(mock_worker_client()),
+        )
+        .await
+        .unwrap();
+        let dealer = fixed_size_permit_dealer::<WorkflowSlotKind>(1);
+        let permit = dealer.acquire_owned().await.into_used(WorkflowSlotInfo {
+            workflow_type: work.workflow_type.clone(),
+            is_sticky: false,
+        });
+        PermittedWFT {
+            work,
+            permit,
+            paginator,
+        }
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn transferring_buffer_preserves_query_groups(
+        #[values(false, true)] current_queries: bool,
+        #[values(false, true)] superseded: bool,
+    ) {
+        let mut original = BufferedTasks::default();
+        if current_queries {
+            original.buffer(task(1, true).await);
+            original.buffer(task(2, true).await);
+        }
+        original.buffer(task(3, false).await);
+        original.buffer(task(4, true).await);
+        original.buffer(task(5, true).await);
+        assert_eq!(
+            original.get_next_wft().unwrap().work.attempt,
+            if current_queries { 1 } else { 4 }
+        );
+        let mut restored = BufferedTasks::default();
+        for task in original.into_buffer_order() {
+            restored.buffer(task);
+        }
+        if superseded {
+            restored.buffer(task(6, false).await);
+        }
+        let mut actual = vec![];
+        while let Some(task) = restored.get_next_wft() {
+            actual.push(task.work.attempt);
+        }
+        let expected = match (current_queries, superseded) {
+            (true, false) => vec![2, 4, 5, 3],
+            (false, false) => vec![5, 3],
+            (true, true) => vec![2, 6],
+            (false, true) => vec![6],
+        };
+        assert_eq!(actual, expected);
     }
 }

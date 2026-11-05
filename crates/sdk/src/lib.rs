@@ -132,6 +132,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryStreamExt, future::LocalBoxFuture};
+use parking_lot::Mutex;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -143,25 +144,34 @@ use std::{
 };
 use temporalio_client::{Client, ClientOptions, NamespacedClient};
 #[cfg(feature = "experimental")]
-use temporalio_common::protos::temporal::api::worker::v1::PluginInfo;
+use temporalio_common::protos::temporal::api::worker::v1::{PluginInfo, StorageDriverInfo};
 use temporalio_common::{
     ActivityDefinition, WorkflowDefinition,
     data_converters::{
-        ActivitySerializationContext, DataConverter, SerializationContext,
+        ActivitySerializationContext, DataConverter, PayloadConversionError, SerializationContext,
         SerializationContextData, WorkflowSerializationContext,
+    },
+    external_storage::{
+        StorageOperationMetrics, StoreTarget, retrieve_external_payloads, store_external_payloads,
     },
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
         coresdk::{
             ActivityTaskCompletion,
-            activity_result::ActivityExecutionResult,
+            activity_result::{self, ActivityExecutionResult, activity_execution_result},
             activity_task::{ActivityTask, activity_task},
+            common::{ExternalStorageMetrics, NamespacedWorkflowExecution},
             workflow_activation::{WorkflowActivation, workflow_activation_job::Variant},
-            workflow_completion::WorkflowActivationCompletion,
+            workflow_commands::{
+                WorkflowCommand, signal_external_workflow_execution, workflow_command,
+            },
+            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
         },
         temporal::api::{
-            common::v1::Payload, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+            common::v1::Payload,
+            enums::v1::{ActivityTaskFailedCause, WorkflowTaskFailedCause},
+            failure::v1::Failure,
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -664,6 +674,7 @@ impl WorkerOptions {
         &self,
         namespace: String,
         connection_identity: String,
+        data_converter: &DataConverter,
     ) -> Result<WorkerConfig, String> {
         let workflows_registered = !self.workflows.is_empty();
         #[cfg(feature = "wasm-workflows")]
@@ -692,6 +703,20 @@ impl WorkerOptions {
             .collect();
         #[cfg(not(feature = "experimental"))]
         let plugin_info = HashSet::new();
+        #[cfg(feature = "experimental")]
+        let storage_drivers = data_converter
+            .external_storage()
+            .into_iter()
+            .flat_map(|external_storage| external_storage.drivers())
+            .map(|driver| StorageDriverInfo {
+                r#type: driver.driver_type().to_owned(),
+            })
+            .collect();
+        #[cfg(not(feature = "experimental"))]
+        let storage_drivers = {
+            let _ = data_converter;
+            HashSet::new()
+        };
 
         let tuner = self.tuner.to_core()?;
 
@@ -762,6 +787,7 @@ impl WorkerOptions {
                     .collect(),
             )
             .plugins(plugin_info)
+            .storage_drivers(storage_drivers)
             .disable_payload_error_limit(disable_payload_error_limit)
             .build()
     }
@@ -796,6 +822,9 @@ struct CommonWorker {
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
+    /// Retrieval metrics for each run's current activation, sent with its completion. Not part of
+    /// `workflows` because a run's first activation is retrieved before the run has an entry there.
+    download_metrics: RefCell<HashMap<String, ExternalStorageMetrics>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
     detect_nondeterministic_futures: bool,
@@ -806,6 +835,108 @@ struct WorkflowHalf {
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
+    store_targets: Arc<RunStoreTargets>,
+}
+
+/// Decides which execution each command in a run's completions stores its payloads on behalf of.
+/// Holds the run's identity, captured when the run starts since a completion carries only its run
+/// id.
+#[derive(Debug)]
+struct RunStoreTargets {
+    namespace: String,
+    workflow_id: String,
+    run_id: String,
+    workflow_type: String,
+    /// Set for a child that was not continued from another run.
+    parent: Option<NamespacedWorkflowExecution>,
+}
+
+impl RunStoreTargets {
+    fn current(&self) -> StoreTarget {
+        StoreTarget::workflow(
+            &self.namespace,
+            &self.workflow_id,
+            &self.run_id,
+            &self.workflow_type,
+        )
+    }
+
+    fn namespace_or_current<'a>(&'a self, namespace: &'a str) -> &'a str {
+        if namespace.is_empty() {
+            &self.namespace
+        } else {
+            namespace
+        }
+    }
+
+    /// A command that hands payloads to another execution stores them on behalf of that execution.
+    ///
+    /// Every command is listed, with no catch-all, so that a command added to the API fails to
+    /// compile until someone decides its target. Falling back to the current run would give it a
+    /// target that looks right and may not be.
+    fn for_command(&self, command: &WorkflowCommand) -> Option<StoreTarget> {
+        let variant = command.variant.as_ref()?;
+        Some(match variant {
+            workflow_command::Variant::StartChildWorkflowExecution(child) => StoreTarget::workflow(
+                self.namespace_or_current(&child.namespace),
+                &child.workflow_id,
+                "",
+                &child.workflow_type,
+            ),
+            workflow_command::Variant::SignalExternalWorkflowExecution(signal) => {
+                match signal.target.as_ref()? {
+                    signal_external_workflow_execution::Target::WorkflowExecution(execution) => {
+                        StoreTarget::workflow(
+                            self.namespace_or_current(&execution.namespace),
+                            &execution.workflow_id,
+                            &execution.run_id,
+                            "",
+                        )
+                    }
+                    signal_external_workflow_execution::Target::ChildWorkflowId(id) => {
+                        StoreTarget::workflow(&self.namespace, id, "", "")
+                    }
+                }
+            }
+            workflow_command::Variant::ContinueAsNewWorkflowExecution(next) => {
+                let workflow_type = if next.workflow_type.is_empty() {
+                    &self.workflow_type
+                } else {
+                    &next.workflow_type
+                };
+                StoreTarget::workflow(&self.namespace, &self.workflow_id, "", workflow_type)
+            }
+            workflow_command::Variant::CompleteWorkflowExecution(_) => match &self.parent {
+                Some(parent) => StoreTarget::workflow(
+                    self.namespace_or_current(&parent.namespace),
+                    &parent.workflow_id,
+                    &parent.run_id,
+                    "",
+                ),
+                None => self.current(),
+            },
+            // The handler reads the operation's input, but there is no Nexus operation target yet.
+            workflow_command::Variant::ScheduleNexusOperation(_) => self.current(),
+            // Every other command's payloads belong to this run.
+            workflow_command::Variant::StartTimer(_)
+            | workflow_command::Variant::ScheduleActivity(_)
+            | workflow_command::Variant::RespondToQuery(_)
+            | workflow_command::Variant::RequestCancelActivity(_)
+            | workflow_command::Variant::CancelTimer(_)
+            | workflow_command::Variant::FailWorkflowExecution(_)
+            | workflow_command::Variant::CancelWorkflowExecution(_)
+            | workflow_command::Variant::SetPatchMarker(_)
+            | workflow_command::Variant::CancelChildWorkflowExecution(_)
+            | workflow_command::Variant::RequestCancelExternalWorkflowExecution(_)
+            | workflow_command::Variant::CancelSignalWorkflow(_)
+            | workflow_command::Variant::ScheduleLocalActivity(_)
+            | workflow_command::Variant::RequestCancelLocalActivity(_)
+            | workflow_command::Variant::UpsertWorkflowSearchAttributes(_)
+            | workflow_command::Variant::ModifyWorkflowProperties(_)
+            | workflow_command::Variant::UpdateResponse(_)
+            | workflow_command::Variant::RequestCancelNexusOperation(_) => self.current(),
+        })
+    }
 }
 
 struct WorkflowFutureHandle<F: Future> {
@@ -817,7 +948,7 @@ struct WorkflowFutureHandle<F: Future> {
 struct ActivityHalf {
     /// Maps activity type to the function for executing activities of that type
     activities: ActivityDefinitions,
-    task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
+    task_tokens_to_cancels: Arc<Mutex<HashMap<TaskToken, CancellationToken>>>,
     tasks: TaskTracker,
 }
 
@@ -862,15 +993,34 @@ impl ActivityNotRegisteredError {
 async fn encode_workflow_completion(
     completion: &mut WorkflowActivationCompletion,
     data_converter: &DataConverter,
+    run: Option<&RunStoreTargets>,
 ) {
     let run_id = completion.run_id.clone();
-    if let Err(err) = encode_payloads(
-        completion,
-        data_converter.codec(),
-        &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
-    )
-    .await
-    {
+    let mut uploads = Vec::new();
+    let encoded = async {
+        encode_payloads(
+            completion,
+            data_converter.codec(),
+            &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+        )
+        .await?;
+        match &mut completion.status {
+            Some(workflow_activation_completion::Status::Successful(success)) => {
+                for command in &mut success.commands {
+                    let target = run.and_then(|run| run.for_command(command));
+                    uploads.push(store_external_payloads(command, data_converter, target).await?);
+                }
+            }
+            Some(workflow_activation_completion::Status::Failed(failed)) => {
+                let target = run.map(RunStoreTargets::current);
+                uploads.push(store_external_payloads(failed, data_converter, target).await?);
+            }
+            None => {}
+        }
+        Ok::<_, PayloadConversionError>(())
+    }
+    .await;
+    if let Err(err) = encoded {
         error!(run_id, error = %err, "Failed encoding workflow activation completion");
         *completion = WorkflowActivationCompletion::fail(
             run_id,
@@ -878,27 +1028,68 @@ async fn encode_workflow_completion(
                 message: format!("Failed encoding completion: {err}"),
                 ..Default::default()
             },
-            Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+            Some(workflow_task_failed_cause(&err)),
         );
+    }
+    // Also reported for a failed completion, since stores that succeeded still took time.
+    completion.payload_upload_metrics = uploads
+        .into_iter()
+        .flatten()
+        .reduce(StorageOperationMetrics::merge)
+        .map(StorageOperationMetrics::into_proto);
+}
+
+fn workflow_task_failed_cause(err: &PayloadConversionError) -> WorkflowTaskFailedCause {
+    match err {
+        PayloadConversionError::ExternalStorage(_) => {
+            WorkflowTaskFailedCause::ExternalStorageFailure
+        }
+        _ => WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+    }
+}
+
+fn activity_processing_failure(
+    message: String,
+    err: &PayloadConversionError,
+) -> ActivityExecutionResult {
+    let cause = match err {
+        PayloadConversionError::ExternalStorage(_) => {
+            ActivityTaskFailedCause::ExternalStorageFailure
+        }
+        _ => ActivityTaskFailedCause::ActivityWorkerUnhandledFailure,
+    };
+    ActivityExecutionResult {
+        status: Some(activity_execution_result::Status::Failed(
+            activity_result::Failure {
+                failure: Some(Failure::application_failure(message, false)),
+                cause: cause as i32,
+            },
+        )),
     }
 }
 
 async fn encode_activity_completion(
     completion: &mut ActivityTaskCompletion,
     data_converter: &DataConverter,
+    target: Option<StoreTarget>,
 ) {
-    if let Err(err) = encode_payloads(
-        completion,
-        data_converter.codec(),
-        &SerializationContextData::Activity(ActivitySerializationContext::new()),
-    )
-    .await
-    {
+    let encoded = async {
+        encode_payloads(
+            completion,
+            data_converter.codec(),
+            &SerializationContextData::Activity(ActivitySerializationContext::new()),
+        )
+        .await?;
+        store_external_payloads(completion, data_converter, target).await?;
+        Ok::<_, PayloadConversionError>(())
+    }
+    .await;
+    if let Err(err) = encoded {
         error!(error = %err, "Failed encoding activity task completion");
-        completion.result = Some(ActivityExecutionResult::fail(Failure::application_failure(
+        completion.result = Some(activity_processing_failure(
             format!("Failed encoding activity completion: {err}"),
-            false,
-        )));
+            &err,
+        ));
     }
 }
 
@@ -914,7 +1105,11 @@ impl Worker {
         #[cfg(feature = "experimental")]
         plugins::apply_worker_plugins(client.options(), &mut options)?;
         let wc = options
-            .to_core_options(client.namespace(), client.identity())
+            .to_core_options(
+                client.namespace(),
+                client.identity(),
+                &client.options().data_converter,
+            )
             .map_err(|error| WorkerCreateError::Initialization(anyhow!(error)))?;
         let core = init_worker(runtime.core(), wc, client.connection().clone())
             .map_err(WorkerCreateError::Initialization)?;
@@ -1015,6 +1210,7 @@ impl Worker {
             },
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
+                download_metrics: Default::default(),
                 workflow_definitions: workflows,
                 workflow_removed_from_map: Default::default(),
                 detect_nondeterministic_futures: false,
@@ -1162,13 +1358,31 @@ impl Worker {
         let wf_completion_processor = async {
             UnboundedReceiverStream::new(completions_rx)
                 .map(Ok)
-                .try_for_each_concurrent(None, |mut completion| async {
-                    encode_workflow_completion(&mut completion, &common.data_converter).await;
-                    for i in &common.worker_interceptors {
-                        i.on_workflow_activation_completion(&completion).await;
-                    }
-                    common.worker.complete_workflow_activation(completion).await
-                })
+                .try_for_each_concurrent(
+                    None,
+                    |mut completion: WorkflowActivationCompletion| async {
+                        let run = wf_half
+                            .workflows
+                            .borrow()
+                            .get(&completion.run_id)
+                            .map(|data| Arc::clone(&data.store_targets));
+                        let download = wf_half
+                            .download_metrics
+                            .borrow_mut()
+                            .remove(&completion.run_id);
+                        encode_workflow_completion(
+                            &mut completion,
+                            &common.data_converter,
+                            run.as_deref(),
+                        )
+                        .await;
+                        completion.payload_download_metrics = download;
+                        for i in &common.worker_interceptors {
+                            i.on_workflow_activation_completion(&completion).await;
+                        }
+                        common.worker.complete_workflow_activation(completion).await
+                    },
+                )
                 .await
                 .map_err(|source| WorkerRunError::Fatal {
                     message: "workflow completions processor encountered an error".to_owned(),
@@ -1193,13 +1407,31 @@ impl Worker {
                                         source: Box::new(source),
                                     })?,
                                 };
-                            if let Err(err) = decode_payloads(
-                                &mut activation,
-                                common.data_converter.codec(),
-                                &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
-                            )
-                            .await
-                            {
+                            let mut download = None;
+                            let decoded = async {
+                                download = retrieve_external_payloads(
+                                    &mut activation,
+                                    &common.data_converter,
+                                )
+                                .await?;
+                                decode_payloads(
+                                    &mut activation,
+                                    common.data_converter.codec(),
+                                    &SerializationContextData::Workflow(WorkflowSerializationContext::new()),
+                                )
+                                .await?;
+                                Ok::<_, PayloadConversionError>(())
+                            }
+                            .await;
+                            // Recorded before a decoding failure is reported, since retrieval that
+                            // succeeded still took time.
+                            if let Some(download) = download {
+                                wf_half
+                                    .download_metrics
+                                    .borrow_mut()
+                                    .insert(activation.run_id.clone(), download.into_proto());
+                            }
+                            if let Err(err) = decoded {
                                 let run_id = activation.run_id;
                                 error!(run_id, error = %err, "Failed decoding workflow activation");
                                 completions_tx
@@ -1209,9 +1441,7 @@ impl Worker {
                                             message: format!("Failed decoding activation: {err}"),
                                             ..Default::default()
                                         },
-                                        Some(
-                                            WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
-                                        ),
+                                        Some(workflow_task_failed_cause(&err)),
                                     ))
                                     .expect("Completion channel intact");
                                 continue;
@@ -1279,7 +1509,31 @@ impl Worker {
                             message: "activity polling failed".to_owned(),
                             source: Box::new(source),
                         })?;
-                        if let Err(err) =
+                        let store_target = match &activity.variant {
+                            Some(activity_task::Variant::Start(start)) => {
+                                let namespace = &common.worker.get_config().namespace;
+                                Some(match &start.workflow_execution {
+                                    Some(execution) if !execution.workflow_id.is_empty() => {
+                                        StoreTarget::workflow(
+                                            namespace,
+                                            &execution.workflow_id,
+                                            &execution.run_id,
+                                            &start.workflow_type,
+                                        )
+                                    }
+                                    _ => StoreTarget::activity(
+                                        namespace,
+                                        &start.activity_id,
+                                        &start.run_id,
+                                        &start.activity_type,
+                                    ),
+                                })
+                            }
+                            _ => None,
+                        };
+                        let decoded = async {
+                            retrieve_external_payloads(&mut activity, &common.data_converter)
+                                .await?;
                             decode_payloads(
                                 &mut activity,
                                 common.data_converter.codec(),
@@ -1287,20 +1541,25 @@ impl Worker {
                                     ActivitySerializationContext::new(),
                                 ),
                             )
-                            .await
-                        {
+                            .await?;
+                            Ok::<_, PayloadConversionError>(())
+                        }
+                        .await;
+                        if let Err(err) = decoded {
                             error!(error = %err, "Failed decoding activity task");
                             let mut completion = ActivityTaskCompletion {
                                 task_token: activity.task_token,
-                                result: Some(ActivityExecutionResult::fail(
-                                    Failure::application_failure(
-                                        format!("Failed decoding activity task: {err}"),
-                                        false,
-                                    ),
+                                result: Some(activity_processing_failure(
+                                    format!("Failed decoding activity task: {err}"),
+                                    &err,
                                 )),
                             };
-                            encode_activity_completion(&mut completion, &common.data_converter)
-                                .await;
+                            encode_activity_completion(
+                                &mut completion,
+                                &common.data_converter,
+                                store_target,
+                            )
+                            .await;
                             common
                                 .worker
                                 .complete_activity_task(completion)
@@ -1318,6 +1577,7 @@ impl Worker {
                             common.data_converter.clone(),
                             common.activity_inbound_interceptors.clone(),
                             activity,
+                            store_target.clone(),
                         ) {
                             Ok(()) => {}
                             Err(ActivityTaskHandlerError::UnregisteredActivity {
@@ -1339,8 +1599,12 @@ impl Worker {
                                     task_token,
                                     result: Some(ActivityExecutionResult::fail(failure)),
                                 };
-                                encode_activity_completion(&mut completion, &common.data_converter)
-                                    .await;
+                                encode_activity_completion(
+                                    &mut completion,
+                                    &common.data_converter,
+                                    store_target,
+                                )
+                                .await;
                                 common
                                     .worker
                                     .complete_activity_task(completion)
@@ -1423,6 +1687,16 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
+            let store_targets = Arc::new(RunStoreTargets {
+                namespace: common.worker.get_config().namespace.clone(),
+                workflow_id: sw.workflow_id.clone(),
+                run_id: run_id.clone(),
+                workflow_type: workflow_type.clone(),
+                parent: sw
+                    .parent_workflow_info
+                    .clone()
+                    .filter(|_| sw.continued_from_execution_run_id.is_empty()),
+            });
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match start_workflow(
@@ -1495,6 +1769,7 @@ impl WorkflowHalf {
                 run_id.clone(),
                 WorkflowData {
                     activation_chan: activations,
+                    store_targets,
                 },
             );
         }
@@ -1534,6 +1809,7 @@ impl WorkflowHalf {
 
 impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
+    #[allow(clippy::too_many_arguments)]
     fn activity_task_handler(
         &mut self,
         worker: Arc<CoreWorker>,
@@ -1542,6 +1818,7 @@ impl ActivityHalf {
         data_converter: DataConverter,
         activity_inbound_interceptors: Vec<Arc<dyn ActivityInboundInterceptor>>,
         activity: ActivityTask,
+        store_target: Option<StoreTarget>,
     ) -> Result<(), ActivityTaskHandlerError> {
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
@@ -1564,7 +1841,9 @@ impl ActivityHalf {
                 );
                 let ct = CancellationToken::new();
                 let task_token = activity.task_token;
-                self.task_tokens_to_cancels
+                let task_tokens_to_cancels = self.task_tokens_to_cancels.clone();
+                task_tokens_to_cancels
+                    .lock()
                     .insert(task_token.clone().into(), ct.clone());
 
                 let (ctx, args) = ActivityContext::new(
@@ -1574,6 +1853,7 @@ impl ActivityHalf {
                     task_queue,
                     task_token.clone(),
                     start,
+                    store_target.clone(),
                 );
                 let codec_data_converter = data_converter.clone();
 
@@ -1590,6 +1870,7 @@ impl ActivityHalf {
                     }
                     .instrument(span);
                     let result = act_fut.await;
+                    task_tokens_to_cancels.lock().remove(task_token.as_slice());
                     let result = match result {
                         Ok(output) => {
                             // Codec application happens at the SDK/Core boundary, so activity
@@ -1612,7 +1893,12 @@ impl ActivityHalf {
                         task_token,
                         result: Some(result),
                     };
-                    encode_activity_completion(&mut completion, &codec_data_converter).await;
+                    encode_activity_completion(
+                        &mut completion,
+                        &codec_data_converter,
+                        store_target,
+                    )
+                    .await;
                     worker.complete_activity_task(completion).await?;
                     Ok::<_, anyhow::Error>(())
                 });
@@ -1620,6 +1906,7 @@ impl ActivityHalf {
             Some(activity_task::Variant::Cancel(_)) => {
                 if let Some(ct) = self
                     .task_tokens_to_cancels
+                    .lock()
                     .get(activity.task_token.as_slice())
                 {
                     ct.cancel();
@@ -1685,7 +1972,11 @@ mod tests {
         },
         protos::coresdk::{
             activity_result::activity_execution_result,
-            workflow_commands::{CompleteWorkflowExecution, workflow_command},
+            activity_task::{Cancel, Start},
+            workflow_commands::{
+                CompleteWorkflowExecution, SignalExternalWorkflowExecution,
+                StartChildWorkflowExecution, workflow_command,
+            },
             workflow_completion::workflow_activation_completion,
         },
     };
@@ -1742,7 +2033,11 @@ mod tests {
             .build();
         options.worker_interceptors.push(observer);
         let core_options = options
-            .to_core_options("test_namespace".to_owned(), String::new())
+            .to_core_options(
+                "test_namespace".to_owned(),
+                String::new(),
+                &DataConverter::default(),
+            )
             .unwrap();
         let core = init_replay_worker(ReplayWorkerInput::new(core_options, histories)).unwrap();
         Worker::new_from_core_options_prepared(
@@ -1893,6 +2188,54 @@ mod tests {
         assert_eq!(Arc::strong_count(&worker.common.worker), 1);
     }
 
+    #[tokio::test]
+    async fn activity_cancel_tokens_removed_after_completion() {
+        let worker = run_until_test_worker(stream::empty(), Default::default());
+        let mut act_half = ActivityHalf {
+            activities: WorkerOptions::new("task_q")
+                .register_activities(MyActivities {})
+                .build()
+                .activities(),
+            ..Default::default()
+        };
+        let task_token = b"task-token".to_vec();
+        let handle_task = |act_half: &mut ActivityHalf, variant| {
+            act_half
+                .activity_task_handler(
+                    worker.common.worker.clone(),
+                    worker.common.client_options.clone(),
+                    worker.common.task_queue.clone(),
+                    worker.common.data_converter.clone(),
+                    vec![],
+                    ActivityTask {
+                        task_token: task_token.clone(),
+                        variant: Some(variant),
+                    },
+                    None,
+                )
+                .unwrap();
+        };
+
+        handle_task(
+            &mut act_half,
+            activity_task::Variant::Start(Start {
+                activity_type: "MyActivities::my_activity".to_owned(),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(act_half.task_tokens_to_cancels.lock().len(), 1);
+        act_half.tasks.close();
+        act_half.tasks.wait().await;
+        assert!(act_half.task_tokens_to_cancels.lock().is_empty());
+
+        // Cancels can still arrive for tasks that already finished and must be ignored
+        handle_task(
+            &mut act_half,
+            activity_task::Variant::Cancel(Cancel::default()),
+        );
+        assert!(act_half.task_tokens_to_cancels.lock().is_empty());
+    }
+
     #[derive(Default)]
     struct FailingEncodeCodec {
         calls: AtomicUsize,
@@ -1980,7 +2323,7 @@ mod tests {
             }),
         );
 
-        encode_workflow_completion(&mut completion, &data_converter).await;
+        encode_workflow_completion(&mut completion, &data_converter, None).await;
 
         let Some(workflow_activation_completion::Status::Failed(failed)) = completion.status else {
             panic!("expected failed workflow completion")
@@ -2009,7 +2352,7 @@ mod tests {
             result: Some(ActivityExecutionResult::ok(Payload::default())),
         };
 
-        encode_activity_completion(&mut completion, &data_converter).await;
+        encode_activity_completion(&mut completion, &data_converter, None).await;
 
         let Some(activity_execution_result::Status::Failed(failed)) =
             completion.result.unwrap().status
@@ -2164,7 +2507,7 @@ mod tests {
 
         let actual = options
             .build()
-            .to_core_options("ns".into(), String::new())
+            .to_core_options("ns".into(), String::new(), &DataConverter::default())
             .map(|config| config.task_types);
         assert_eq!(
             actual.as_ref().map_err(String::as_str),
@@ -2255,7 +2598,11 @@ mod tests {
             .maybe_client_identity_override(worker_override.map(|s| s.to_owned()))
             .build();
         let config = opts
-            .to_core_options("ns".into(), connection_identity.into())
+            .to_core_options(
+                "ns".into(),
+                connection_identity.into(),
+                &DataConverter::default(),
+            )
             .unwrap();
         assert_eq!(config.client_identity_override, expected);
     }
@@ -2266,7 +2613,7 @@ mod tests {
             .register_activities(MyActivities {})
             .max_eager_activity_reservations_per_workflow_task(7)
             .build()
-            .to_core_options("ns".into(), String::new())
+            .to_core_options("ns".into(), String::new(), &DataConverter::default())
             .unwrap();
         assert_eq!(config.max_eager_activity_reservations_per_workflow_task, 7);
     }
@@ -2312,9 +2659,83 @@ mod tests {
                 .register_activities(MyActivities {})
                 .maybe_disable_payload_error_limit(override_value)
                 .build()
-                .to_core_options("ns".into(), String::new())
+                .to_core_options("ns".into(), String::new(), &DataConverter::default())
                 .unwrap();
             assert_eq!(config.disable_payload_error_limit, expected);
         }
+    }
+
+    #[cfg(feature = "experimental")]
+    fn run_store_targets() -> RunStoreTargets {
+        RunStoreTargets {
+            namespace: "this-ns".to_owned(),
+            workflow_id: "parent-id".to_owned(),
+            run_id: "parent-run".to_owned(),
+            workflow_type: "Parent".to_owned(),
+            parent: None,
+        }
+    }
+
+    #[cfg(feature = "experimental")]
+    #[rstest::rstest]
+    #[case::named_namespace("other-ns", "other-ns")]
+    #[case::empty_namespace("", "this-ns")]
+    fn child_start_targets_the_child_in_its_namespace(
+        #[case] namespace: &str,
+        #[case] expected_namespace: &str,
+    ) {
+        let command: WorkflowCommand =
+            workflow_command::Variant::StartChildWorkflowExecution(StartChildWorkflowExecution {
+                namespace: namespace.to_owned(),
+                workflow_id: "child-id".to_owned(),
+                workflow_type: "Child".to_owned(),
+                ..Default::default()
+            })
+            .into();
+
+        assert_eq!(
+            run_store_targets().for_command(&command),
+            Some(StoreTarget::workflow(
+                expected_namespace,
+                "child-id",
+                "",
+                "Child"
+            ))
+        );
+    }
+
+    #[cfg(feature = "experimental")]
+    #[rstest::rstest]
+    #[case::named_namespace("other-ns", "other-ns")]
+    #[case::empty_namespace("", "this-ns")]
+    fn external_signal_targets_the_signalled_workflow_in_its_namespace(
+        #[case] namespace: &str,
+        #[case] expected_namespace: &str,
+    ) {
+        let command: WorkflowCommand = workflow_command::Variant::SignalExternalWorkflowExecution(
+            SignalExternalWorkflowExecution {
+                target: Some(
+                    signal_external_workflow_execution::Target::WorkflowExecution(
+                        NamespacedWorkflowExecution {
+                            namespace: namespace.to_owned(),
+                            workflow_id: "target-id".to_owned(),
+                            run_id: "target-run".to_owned(),
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+        )
+        .into();
+
+        assert_eq!(
+            run_store_targets().for_command(&command),
+            Some(StoreTarget::workflow(
+                expected_namespace,
+                "target-id",
+                "target-run",
+                ""
+            ))
+        );
     }
 }

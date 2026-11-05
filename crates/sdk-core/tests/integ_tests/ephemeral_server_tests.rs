@@ -6,7 +6,7 @@ use crate::{
     integ_tests::workflow_tests::OneActivityWorkflow,
 };
 use futures_util::{TryStreamExt, stream};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use temporalio_client::{
     Connection, ConnectionOptions, WorkflowStartOptions,
     grpc::{TestService, WorkflowService},
@@ -39,9 +39,13 @@ impl TestEnvironmentWorkflow {
 #[temporalio_macros::cloud_test_exclusion(crate::CloudTestExclusionReason::RequiresLocalServer)]
 #[tokio::test]
 async fn test_workflow_environment_local() {
-    let env = WorkflowEnvironment::start_local(LocalWorkflowEnvironmentOptions::default())
-        .await
-        .unwrap();
+    let env = WorkflowEnvironment::start_local(
+        LocalWorkflowEnvironmentOptions::builder()
+            .startup_timeout(Duration::from_secs(30))
+            .build(),
+    )
+    .await
+    .unwrap();
     let runtime = Runtime::from_current_tokio(Default::default()).unwrap();
     let client = env.client().clone();
     let worker_options = WorkerOptions::new(format!("test-env-{}", rand_6_chars()))
@@ -173,6 +177,7 @@ mod test_server {
     async fn test_server_fixed() {
         let config = TestServerConfig::builder()
             .exe(fixed_cached_download("v1.16.0"))
+            .startup_timeout(Duration::from_secs(30))
             .build();
         let mut server = config.start_server().await.unwrap();
         assert_ephemeral_server(&server).await;
