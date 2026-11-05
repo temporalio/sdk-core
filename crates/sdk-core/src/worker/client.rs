@@ -446,10 +446,7 @@ pub struct PollOptions {
     pub no_retry: Option<NoRetryOnMatching>,
     /// Overrides the default RPC timeout for the poll request
     pub timeout_override: Option<Duration>,
-    /// The poller pool's current scaling target, reported to the server so it can spread
-    /// poller-scaling suggestions across a fleet by share rather than letting them land on
-    /// whichever worker happens to receive the most tasks. `None` for a fixed-size pool,
-    /// which has no target to balance; the server then leaves this worker out of fairness.
+    /// The pool's current scaling target. `None` for a fixed-size pool.
     pub poller_target: Option<i32>,
 }
 /// Additional options specific to workflow task polling

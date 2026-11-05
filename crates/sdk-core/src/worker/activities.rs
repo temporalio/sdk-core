@@ -1031,14 +1031,13 @@ mod tests {
     use super::*;
     use crate::{
         abstractions::tests::fixed_size_permit_dealer,
-        pollers::{ActivityTaskOptions, LongPollBuffer},
+        pollers::{ActivityTaskOptions, LongPollBuffer, PollerHeartbeatState},
         prost_dur,
         worker::{
             NamespaceCapabilities, PollerBehavior,
             client::{MockWorkerClient, mocks::mock_worker_client},
         },
     };
-    use crossbeam_utils::atomic::AtomicCell;
     use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
 
     fn build_local_timeout_test_atm(
@@ -1058,8 +1057,7 @@ mod tests {
                 max_worker_acts_per_second: None,
                 max_tps: None,
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         );
         WorkerActivityTasks::new(
@@ -1146,8 +1144,7 @@ mod tests {
                 max_worker_acts_per_second: Some(2.0),
                 max_tps: None,
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         );
         let atm = WorkerActivityTasks::new(

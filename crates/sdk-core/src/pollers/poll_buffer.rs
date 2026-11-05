@@ -102,6 +102,16 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
     did_start: AtomicBool,
 }
 
+/// Per-poller-type state the poll scaler publishes for the worker heartbeat, which is built
+/// before any poller exists.
+#[derive(Clone, Default)]
+pub(crate) struct PollerHeartbeatState {
+    /// When the pool last polled successfully.
+    pub(crate) last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    /// The pool's current scaling target. `None` for a fixed-size pool.
+    pub(crate) target: Arc<AtomicCell<Option<i32>>>,
+}
+
 pub(crate) struct WorkflowTaskOptions {
     pub(crate) wft_poller_shared: Option<Arc<WFTPollerShared>>,
 }
@@ -124,8 +134,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: WorkflowTaskOptions,
-        last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        reported_target: Arc<AtomicCell<Option<i32>>>,
+        heartbeat_state: PollerHeartbeatState,
         capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
@@ -133,8 +142,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             poller_behavior,
             num_pollers_handler,
             shutdown.clone(),
-            last_successful_poll_time,
-            reported_target,
+            heartbeat_state,
             capabilities.clone(),
         );
         if let Some(wftps) = options.wft_poller_shared.as_ref() {
@@ -210,8 +218,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: ActivityTaskOptions,
-        last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        reported_target: Arc<AtomicCell<Option<i32>>>,
+        heartbeat_state: PollerHeartbeatState,
         capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let pre_permit_delay = options
@@ -254,8 +261,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             poller_behavior,
             num_pollers_handler,
             shutdown.clone(),
-            last_successful_poll_time,
-            reported_target,
+            heartbeat_state,
             capabilities.clone(),
         );
         Self::new(
@@ -279,8 +285,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         permit_dealer: MeteredPermitDealer<NexusSlotKind>,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
-        last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        reported_target: Arc<AtomicCell<Option<i32>>>,
+        heartbeat_state: PollerHeartbeatState,
         capabilities: Arc<NamespaceCapabilities>,
         worker_commands_queue: bool,
     ) -> Self {
@@ -318,8 +323,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                 poller_behavior,
                 num_pollers_handler,
                 shutdown,
-                last_successful_poll_time,
-                reported_target,
+                heartbeat_state,
                 capabilities.clone(),
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
@@ -544,8 +548,7 @@ where
         behavior: PollerBehavior,
         num_pollers_handler: Option<F>,
         shutdown: CancellationToken,
-        last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-        reported_target: Arc<AtomicCell<Option<i32>>>,
+        heartbeat_state: PollerHeartbeatState,
         capabilities: Arc<NamespaceCapabilities>,
     ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
@@ -569,8 +572,7 @@ where
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
             scale_up_allowed: AtomicBool::new(true),
-            last_successful_poll_time,
-            reported_target,
+            heartbeat_state,
             persistent_error_warning_state: Default::default(),
             exponential_backoff: parking_lot::Mutex::new(TASK_POLL_BACKOFF.build()),
             resource_exhausted_backoff: parking_lot::Mutex::new(THROTTLE_POLL_BACKOFF.build()),
@@ -636,11 +638,7 @@ struct PollScalerReportHandle {
     ingested_this_period: AtomicUsize,
     ingested_last_period: AtomicUsize,
     scale_up_allowed: AtomicBool,
-    last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    /// Mirrors reportable_target() so the heartbeat -- constructed before any
-    /// poller exists -- can read the live target. Same shape as
-    /// last_successful_poll_time above, which solves the same ordering problem.
-    reported_target: Arc<AtomicCell<Option<i32>>>,
+    heartbeat_state: PollerHeartbeatState,
     persistent_error_warning_state: parking_lot::Mutex<PersistentPollErrorWarningState>,
 
     // Exponential backoff for normal errors and resource exhausted errors
@@ -649,12 +647,7 @@ struct PollScalerReportHandle {
 }
 
 impl PollScalerReportHandle {
-    /// The pool's current scaling target, reported to the server on each poll so it can
-    /// spread poller-scaling suggestions across a fleet by share rather than letting them
-    /// land on whichever worker happens to receive the most tasks.
-    ///
-    /// `None` for a fixed-size pool: it has no target to balance, and the server leaves
-    /// such a worker out of fairness entirely rather than assuming anything about it.
+    /// The pool's current scaling target. `None` for a fixed-size pool.
     fn reportable_target(&self) -> Option<i32> {
         if !self.behavior.is_autoscaling() {
             return None;
@@ -671,7 +664,8 @@ impl PollScalerReportHandle {
     ) -> (bool, Option<Duration>) {
         match res {
             Ok(res) => {
-                self.last_successful_poll_time
+                self.heartbeat_state
+                    .last_successful_poll_time
                     .store(Some(SystemTime::now()));
                 // Reset backoff on successful poll
                 *self.exponential_backoff.lock() = TASK_POLL_BACKOFF.build();
@@ -774,7 +768,7 @@ impl PollScalerReportHandle {
 
     /// Mirrors the current target into the cell the heartbeat reads.
     fn publish_target(&self) {
-        self.reported_target.store(self.reportable_target());
+        self.heartbeat_state.target.store(self.reportable_target());
     }
 
     /// We want to avoid scaling down on empty polls if the server has never made any scaling
@@ -986,8 +980,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         );
 
@@ -1044,8 +1037,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         );
 
@@ -1122,8 +1114,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         );
 
@@ -1232,8 +1223,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(INITIAL_POLLERS)))),
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::default()),
         ));
 
@@ -1314,8 +1304,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: None,
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::resolved(Capabilities {
                 poller_autoscaling: true,
                 ..Default::default()
@@ -1393,8 +1382,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: None,
             },
-            Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicCell::new(None)),
+            PollerHeartbeatState::default(),
             Arc::new(NamespaceCapabilities::resolved(Capabilities {
                 worker_poll_complete_on_shutdown: graceful,
                 ..Default::default()
@@ -1462,8 +1450,7 @@ mod tests {
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
             scale_up_allowed: AtomicBool::new(true),
-            last_successful_poll_time: Arc::new(AtomicCell::new(None)),
-            reported_target: Arc::new(AtomicCell::new(None)),
+            heartbeat_state: PollerHeartbeatState::default(),
             persistent_error_warning_state: Default::default(),
             exponential_backoff: parking_lot::Mutex::new(TASK_POLL_BACKOFF.build()),
             resource_exhausted_backoff: parking_lot::Mutex::new(THROTTLE_POLL_BACKOFF.build()),

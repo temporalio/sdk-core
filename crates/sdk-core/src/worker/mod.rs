@@ -46,7 +46,9 @@ pub use workflow::LEGACY_QUERY_ID;
 use crate::{
     ActivityHeartbeat,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
-    pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
+    pollers::{
+        ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer, PollerHeartbeatState,
+    },
     protosext::validate_activity_completion,
     telemetry::metrics::{
         MetricsContext, WorkerHeartbeatMetrics, activity_poller, activity_worker_type,
@@ -65,7 +67,6 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use anyhow::bail;
-use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
@@ -798,17 +799,12 @@ impl Worker {
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
 
-        let wf_last_suc_poll_time = Arc::new(AtomicCell::new(None));
-        let wf_sticky_last_suc_poll_time = Arc::new(AtomicCell::new(None));
-        let act_last_suc_poll_time = Arc::new(AtomicCell::new(None));
-        let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
-        // Autoscaler target per poller type, reported on the heartbeat so the server can
-        // export poller distribution as a metric. Pre-created here for the same reason as
-        // the poll-time cells above: the heartbeat closure is built before any poller exists.
-        let wf_target = Arc::new(AtomicCell::new(None));
-        let wf_sticky_target = Arc::new(AtomicCell::new(None));
-        let act_target = Arc::new(AtomicCell::new(None));
-        let nexus_target = Arc::new(AtomicCell::new(None));
+        // Created here rather than with the pollers because the heartbeat closure below is
+        // built before any poller exists.
+        let wf_poller_heartbeat = PollerHeartbeatState::default();
+        let wf_sticky_poller_heartbeat = PollerHeartbeatState::default();
+        let act_poller_heartbeat = PollerHeartbeatState::default();
+        let nexus_poller_heartbeat = PollerHeartbeatState::default();
         let namespace_description = client
             .workers()
             .namespace_description_source(config.namespace.as_str());
@@ -887,14 +883,10 @@ impl Worker {
                 act_slots: act_slots.clone(),
                 nexus_slots: nexus_slots.clone(),
                 la_slots: la_permit_dealer,
-                wf_last_suc_poll_time: wf_last_suc_poll_time.clone(),
-                wf_sticky_last_suc_poll_time: wf_sticky_last_suc_poll_time.clone(),
-                act_last_suc_poll_time: act_last_suc_poll_time.clone(),
-                nexus_last_suc_poll_time: nexus_last_suc_poll_time.clone(),
-                wf_target: wf_target.clone(),
-                wf_sticky_target: wf_sticky_target.clone(),
-                act_target: act_target.clone(),
-                nexus_target: nexus_target.clone(),
+                wf_poller: wf_poller_heartbeat.clone(),
+                wf_sticky_poller: wf_sticky_poller_heartbeat.clone(),
+                act_poller: act_poller_heartbeat.clone(),
+                nexus_poller: nexus_poller_heartbeat.clone(),
                 status: worker_status.clone(),
                 sys_info: heartbeat_sys_info,
             };
@@ -948,10 +940,8 @@ impl Worker {
                                 &metrics,
                                 &shutdown_token,
                                 &wft_slots,
-                                wf_last_suc_poll_time.clone(),
-                                wf_sticky_last_suc_poll_time.clone(),
-                                wf_target.clone(),
-                                wf_sticky_target.clone(),
+                                wf_poller_heartbeat.clone(),
+                                wf_sticky_poller_heartbeat.clone(),
                                 capabilities.clone(),
                             )
                             .boxed();
@@ -988,8 +978,7 @@ impl Worker {
                                         .max_worker_activities_per_second,
                                     max_tps: config.max_task_queue_activities_per_second,
                                 },
-                                act_last_suc_poll_time.clone(),
-                                act_target.clone(),
+                                act_poller_heartbeat.clone(),
                                 capabilities.clone(),
                             );
                             Some(Box::from(ap) as BoxedActPoller)
@@ -1009,8 +998,7 @@ impl Worker {
                                 nexus_slots.clone(),
                                 shutdown_token.child_token(),
                                 Some(move |np| np_metrics.record_num_pollers(np)),
-                                nexus_last_suc_poll_time,
-                                nexus_target.clone(),
+                                nexus_poller_heartbeat,
                                 capabilities.clone(),
                                 shared_namespace_worker,
                             )) as BoxedNexusPoller)
@@ -2303,14 +2291,10 @@ struct HeartbeatMetrics {
     act_slots: MeteredPermitDealer<ActivitySlotKind>,
     nexus_slots: MeteredPermitDealer<NexusSlotKind>,
     la_slots: MeteredPermitDealer<LocalActivitySlotKind>,
-    wf_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    wf_sticky_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    act_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    nexus_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    wf_target: Arc<AtomicCell<Option<i32>>>,
-    wf_sticky_target: Arc<AtomicCell<Option<i32>>>,
-    act_target: Arc<AtomicCell<Option<i32>>>,
-    nexus_target: Arc<AtomicCell<Option<i32>>>,
+    wf_poller: PollerHeartbeatState,
+    wf_sticky_poller: PollerHeartbeatState,
+    act_poller: PollerHeartbeatState,
+    nexus_poller: PollerHeartbeatState,
     status: Arc<RwLock<WorkerStatus>>,
     sys_info: Arc<dyn SystemResourceInfo + Send + Sync>,
 }
@@ -2398,11 +2382,13 @@ impl WorkerHeartbeatManager {
                         .wft_current_pollers
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
-                        .wf_last_suc_poll_time
+                        .wf_poller
+                        .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
                     poller_target: heartbeat_manager_metrics
-                        .wf_target
+                        .wf_poller
+                        .target
                         .load()
                         .unwrap_or_default(),
                     is_autoscaling: resolve_effective_behavior(
@@ -2417,11 +2403,13 @@ impl WorkerHeartbeatManager {
                         .sticky_wft_current_pollers
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
-                        .wf_sticky_last_suc_poll_time
+                        .wf_sticky_poller
+                        .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
                     poller_target: heartbeat_manager_metrics
-                        .wf_sticky_target
+                        .wf_sticky_poller
+                        .target
                         .load()
                         .unwrap_or_default(),
                     is_autoscaling: resolve_effective_behavior(
@@ -2436,11 +2424,13 @@ impl WorkerHeartbeatManager {
                         .activity_current_pollers
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
-                        .act_last_suc_poll_time
+                        .act_poller
+                        .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
                     poller_target: heartbeat_manager_metrics
-                        .act_target
+                        .act_poller
+                        .target
                         .load()
                         .unwrap_or_default(),
                     is_autoscaling: resolve_effective_behavior(
@@ -2455,11 +2445,13 @@ impl WorkerHeartbeatManager {
                         .nexus_current_pollers
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
-                        .nexus_last_suc_poll_time
+                        .nexus_poller
+                        .last_successful_poll_time
                         .load()
                         .map(|time| time.into()),
                     poller_target: heartbeat_manager_metrics
-                        .nexus_target
+                        .nexus_poller
+                        .target
                         .load()
                         .unwrap_or_default(),
                     is_autoscaling: resolve_effective_behavior(

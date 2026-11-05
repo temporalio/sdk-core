@@ -1,7 +1,8 @@
 mod poll_buffer;
 
 pub(crate) use poll_buffer::{
-    ActivityTaskOptions, LongPollBuffer, WorkflowTaskOptions, WorkflowTaskPoller,
+    ActivityTaskOptions, LongPollBuffer, PollerHeartbeatState, WorkflowTaskOptions,
+    WorkflowTaskPoller,
 };
 pub use temporalio_client::{Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions};
 
