@@ -97,6 +97,24 @@ message Producer {
 }
 
 // Experimental. Might change in the future.
+// The Producer of a write, and which earlier Records the write withdraws. An append, a close and
+// a writer carry the same fields, so the Store orders and withdraws each write the same way.
+message StreamWriter {
+    // Required on a write. Its epoch's case picks the withdrawal rule.
+    Producer producer = 1;
+    // Workflow and Local Activity only. The run's last completed Workflow Task, from a Local
+    // Activity's start. Its started_event_id is 0 before the first. The write withdraws the run's
+    // Local Activity Records whose Workflow Task never completed.
+    WorkflowTaskEpoch previous_completed_task = 2;
+    // Workflow and Local Activity only. The started event ids of the run's failed or timed out
+    // Workflow Tasks. The write withdraws the run's Local Activity Records of these tasks.
+    repeated int64 failed_tasks = 3;
+    // Retry run only. The previous run, on the retry run's first write. Every Record whose
+    // Producer carries it is withdrawn.
+    string withdraw_run = 4;
+}
+
+// Experimental. Might change in the future.
 // One Record of a batch to append. The Store adds the batch's Producer and an offset.
 message AppendRecord {
     temporal.api.common.v1.Payload body = 1;
@@ -107,19 +125,9 @@ message AppendRecord {
 // batch of a higher epoch, or for a retry run's first write, and a read builds a Superseded item
 // from them. A reader drops the earlier Records that the facts match.
 message StreamSuperseded {
-    // The id of the Producer that withdraws.
-    string producer_id = 1;
-    // The epoch of the Producer that withdraws, whose case picks the rule. Empty when only
+    // The writer of the batch that withdraws. Its Producer's epoch is empty when only
     // withdraw_run applies.
-    ProducerEpoch epoch = 2;
-    // Workflow only. The run's last completed Workflow Task.
-    WorkflowTaskEpoch previous_completed_task = 3;
-    // Workflow only. The started event ids of the run's failed or timed out Workflow Tasks.
-    repeated int64 failed_tasks = 4;
-    // Workflow retry only. The previous run. Every Record whose Producer carries it is withdrawn.
-    string withdraw_run = 5;
-    // The run of the Producer, so nobody parses the id. Empty for a client.
-    string run_id = 6;
+    StreamWriter writer = 1;
 }
 
 // Experimental. Might change in the future.

@@ -18,17 +18,13 @@ import "temporal/api/stream/v1/message.proto";
 message OpenWriterRequest {
     string namespace = 1;
     temporal.api.stream.v1.StreamRef ref = 2;
-    temporal.api.stream.v1.Producer producer = 3;
+    // Each batch sends it as AppendRecords does. For a Local Activity it has the run's task facts,
+    // so the writes withdraw the run's orphaned Local Activity Records.
+    temporal.api.stream.v1.StreamWriter writer = 3;
     // A write sends at most this many Records in one batch. Zero is 1000.
     int32 max_batch_size = 4;
     // How long a write retries a Store failure. Empty is 10 s.
     google.protobuf.Duration max_retry_duration = 5;
-    // Local Activity only. The run's last completed Workflow Task, which each batch sends as
-    // AppendRecords does, so the writes withdraw the run's orphaned Local Activity Records.
-    temporal.api.stream.v1.WorkflowTaskEpoch previous_completed_task = 6;
-    // Local Activity only. The run's failed or timed out Workflow Tasks, which each batch sends as
-    // AppendRecords does.
-    repeated int64 failed_tasks = 7;
 }
 
 message OpenWriterResponse {

@@ -69,26 +69,17 @@ message AppendRecordsRequest {
     string namespace = 1;
     temporal.api.stream.v1.StreamRef ref = 2;
     // Required outside a Workflow. In a Workflow the transport sets it.
-    temporal.api.stream.v1.Producer producer = 3;
+    temporal.api.stream.v1.StreamWriter writer = 3;
     // The batch number in this epoch. With the Producer and epoch it is the dedupe key. Zero takes
     // the next number of the epoch. Such a batch has no dedupe, so a retry writes it again.
     int64 sequence = 4;
     repeated temporal.api.stream.v1.AppendRecord records = 5;
-    // The run's last completed Workflow Task, from a Local Activity's start. Its started_event_id
-    // is 0 before the first. The batch withdraws the run's Local Activity Records whose Workflow
-    // Task never completed.
-    temporal.api.stream.v1.WorkflowTaskEpoch previous_completed_task = 6;
-    // The started event ids of the run's failed or timed out Workflow Tasks, from a Local
-    // Activity's start. The batch withdraws the run's Local Activity Records of these tasks.
-    repeated int64 failed_tasks = 7;
-    // Local Activity only. The previous run on a retry run's first batch, to withdraw its Records.
-    string withdraw_run = 8;
     // Only read by the server, on a Workflow Producer's batch. The batch withdraws no Workflow
-    // Task and keeps no task facts, but withdraw_run still applies.
-    bool defer_withdrawal = 9;
+    // Task and keeps no task facts, but the writer's withdraw_run still applies.
+    bool defer_withdrawal = 6;
     // Only read by the server. The server checks the Producer against the Activity's current
     // attempt, so nobody else writes as that Activity.
-    bytes task_token = 10;
+    bytes task_token = 7;
 }
 
 // Experimental. Might change in the future.
@@ -106,16 +97,11 @@ message AppendRecordsResponse {
 message CloseStreamRequest {
     string namespace = 1;
     temporal.api.stream.v1.StreamRef ref = 2;
-    // The Producer that closes the Stream.
-    temporal.api.stream.v1.Producer producer = 3;
-    // Only read by the server. The run's last completed Workflow Task, as on the append.
-    temporal.api.stream.v1.WorkflowTaskEpoch previous_completed_task = 4;
-    // Only read by the server. The run's failed or timed out Workflow Tasks, as on the append.
-    repeated int64 failed_tasks = 5;
-    // Only read by the server. The previous run on a retry run's close, to withdraw its Records.
-    string withdraw_run = 6;
+    // The writer that closes the Stream. An SDK Store reads only its Producer, and the server
+    // also reads its withdrawal fields.
+    temporal.api.stream.v1.StreamWriter writer = 3;
     // Only read by the server. It checks the token as on the append.
-    bytes task_token = 7;
+    bytes task_token = 4;
 }
 
 // Experimental. Might change in the future.
