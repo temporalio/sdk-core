@@ -10,6 +10,8 @@ option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Experimental. Might change in the future.
+// The kind of code that wrote a batch. The kind decides how the Store orders the Producer's
+// epochs, which earlier Records a higher epoch withdraws, and if the Producer can close the Stream.
 enum StreamProducerKind {
     STREAM_PRODUCER_KIND_UNSPECIFIED = 0;
     STREAM_PRODUCER_KIND_WORKFLOW = 1;
@@ -35,6 +37,7 @@ enum StreamCloseStatus {
 }
 
 // Experimental. Might change in the future.
+// The state of a Stream, as a describe gives it.
 // (-- api-linter: core::0216::synonyms=disabled
 //     aip.dev/not-precedent: Named consistently with WorkflowExecutionStatus. --)
 enum StreamStatus {
@@ -45,6 +48,7 @@ enum StreamStatus {
 }
 
 // Experimental. Might change in the future.
+// Where a read starts when it has no from_offset.
 enum StreamReadStart {
     STREAM_READ_START_UNSPECIFIED = 0;
     STREAM_READ_START_BEGINNING = 1;
@@ -62,7 +66,8 @@ enum StreamIdConflictPolicy {
 }
 
 // Experimental. Might change in the future.
-// Why a Stream call failed. Each reason has one gRPC status code.
+// Why a Stream call failed. Each reason has one gRPC status code. An SDK raises its own error
+// class for each reason that code can act on, and a base class for the others.
 enum StreamErrorReason {
     STREAM_ERROR_REASON_UNSPECIFIED = 0;
     // Nobody created the Stream, even after `create_wait`. NOT_FOUND.
@@ -75,7 +80,7 @@ enum StreamErrorReason {
     // Workflow retry withdrew its run. FAILED_PRECONDITION.
     STREAM_ERROR_REASON_FENCED = 4;
     // The batch has a lower `sequence` than the last one of its epoch. FAILED_PRECONDITION.
-    STREAM_ERROR_REASON_SEQUENCE = 5;
+    STREAM_ERROR_REASON_SEQUENCE_TOO_LOW = 5;
     // The batch has the `sequence` of the last one of its epoch, and other content.
     // FAILED_PRECONDITION.
     STREAM_ERROR_REASON_SEQ_DIVERGENT = 6;
@@ -86,12 +91,12 @@ enum StreamErrorReason {
     STREAM_ERROR_REASON_FORMAT_TOO_NEW = 8;
     // The offset is past the newest offset + 1, for example after a failover lost the newest
     // Records. A read from it works again once the Stream has Records up to it. OUT_OF_RANGE.
-    STREAM_ERROR_REASON_OFFSET = 9;
+    STREAM_ERROR_REASON_OFFSET_TOO_HIGH = 9;
     // A Record or a batch is over the Store's limit. INVALID_ARGUMENT.
     STREAM_ERROR_REASON_TOO_LARGE = 10;
     // The request is malformed. INVALID_ARGUMENT.
     STREAM_ERROR_REASON_INVALID = 11;
-    // The Store failed or did not answer. UNAVAILABLE.
+    // The Store failed, did not answer, or gave back data that isn't valid. UNAVAILABLE.
     STREAM_ERROR_REASON_STORAGE = 12;
     // No writer has the id. The SDK's in-process writer only. NOT_FOUND.
     STREAM_ERROR_REASON_UNKNOWN_WRITER = 13;
