@@ -749,6 +749,32 @@ async fn schedule_arguments_round_trip_through_external_storage() {
         .expect("input should be present");
     assert_eq!(stored, input);
 
+    handle
+        .update(
+            |update| {
+                update.set_note("updated");
+            },
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    handle
+        .send_update(description.into_update(), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(driver.stored.lock().unwrap().len(), 1);
+
+    let description = handle.describe(Default::default()).await.unwrap();
+    let ScheduleDescriptionAction::StartWorkflow(action) = description.action() else {
+        panic!("expected a start workflow action");
+    };
+    let stored: String = action
+        .args()
+        .await
+        .unwrap()
+        .expect("input should be present");
+    assert_eq!(stored, input);
+
     handle.delete(Default::default()).await.unwrap();
 }
 
