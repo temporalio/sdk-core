@@ -594,21 +594,18 @@ fn get_free_port(bind_ip: &str) -> io::Result<u16> {
     Ok(addr.port())
 }
 
-/// Number of times a download request is attempted before giving up.
 const DOWNLOAD_MAX_ATTEMPTS: u32 = 4;
 
-/// Sends a download request, retrying transient failures with exponential
-/// backoff. `temporal.download` occasionally answers `503` while a release is
-/// being rolled out, and a brief connection hiccup should not fail a worker's
-/// server download. Only connection errors, timeouts, `429`, and `5xx` are
-/// retried; the request is a plain `GET`, so replaying it is safe.
+/// Retries transient download failures. `temporal.download` can answer `503` during a
+/// release deploy, and a short connection failure should not fail a worker's download.
+/// A plain `GET` is safe to replay.
 async fn send_download_request(
     request: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, EphemeralServerError> {
     for attempt in 1..=DOWNLOAD_MAX_ATTEMPTS {
         let send = request
             .try_clone()
-            .expect("download requests carry no streaming body");
+            .expect("download request has no streaming body");
         let err = match send
             .send()
             .await
@@ -1052,9 +1049,8 @@ mod tests {
     fn get_free_port_can_bind_immediately() {
         let host = "127.0.0.1";
 
-        // Each iteration leaves a couple of sockets in TIME_WAIT. Keep the count
-        // modest so this test does not exhaust the small loopback ephemeral port
-        // range while it shares the process with the rest of the suite.
+        // Each iteration leaves sockets in TIME_WAIT. Keep the count low, since this runs in
+        // the shared test process and could exhaust the small loopback ephemeral port range.
         for _ in 0..50 {
             let port = get_free_port(host).unwrap();
             try_listen_and_dial_on(host, port).expect("Failed to bind to port");
