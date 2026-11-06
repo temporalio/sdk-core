@@ -44,7 +44,9 @@ pub use workflow::LEGACY_QUERY_ID;
 
 use crate::{
     ActivityHeartbeat,
-    abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
+    abstractions::{
+        ClosableMeteredPermitDealer, MeteredPermitDealer, PermitDealerContextData, dbg_panic,
+    },
     pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
     telemetry::metrics::{
@@ -66,6 +68,7 @@ use anyhow::bail;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
+use itertools::Either;
 use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
 use std::{
@@ -79,9 +82,12 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use temporalio_client::worker::{
-    CancelActivityCallback, ClientWorker, HeartbeatCallback, HeartbeatSuccessCallback,
-    SharedNamespaceWorkerTrait, Slot as SlotTrait,
+use temporalio_client::{
+    request_extensions::RetryCallback,
+    worker::{
+        CancelActivityCallback, ClientWorker, HeartbeatCallback, HeartbeatSuccessCallback,
+        SharedNamespaceWorkerTrait, Slot as SlotTrait,
+    },
 };
 #[cfg(test)]
 use temporalio_common::protos::temporal::api::namespace::v1::NamespaceInfo as ApiNamespaceInfo;
@@ -109,15 +115,19 @@ use temporalio_common::{
     telemetry::metrics::TemporalMeter,
     worker::WorkerTaskTypes,
 };
-use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::{
+    select,
+    sync::{mpsc::unbounded_channel, watch},
+    task::{JoinError, JoinHandle},
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::Subscriber;
+use tracing::{Instrument, Subscriber};
 use uuid::Uuid;
 #[cfg(any(feature = "test-utilities", test))]
 use {
     crate::{
-        pollers::{BoxedPoller, MockPermittedPollBuffer},
+        pollers::{BoxedPoller, MockPermittedPollBuffer, PollerError},
         protosext::ValidPollWFTQResponse,
     },
     futures_util::stream::BoxStream,
@@ -456,8 +466,11 @@ pub struct Worker {
     status: Arc<RwLock<WorkerStatus>>,
     /// Capabilities from the namespace description shared by workers on this connection.
     capabilities: Arc<NamespaceCapabilities>,
-    /// Handle for the spawned ShutdownWorker RPC task, awaited during shutdown.
-    shutdown_rpc_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Context for handling ShutdownWorker RPC call. Created in [`Self::initiate_shutdown`] and
+    /// removed in [`Self::shutdown`].
+    shutdown_rpc_context: Mutex<Option<ShutdownRpcContext>>,
+    /// Permit dealer for external WFT slot provider. Closed when shutdown is initiated.
+    external_wft_slots: Arc<ClosableMeteredPermitDealer<WorkflowSlotKind>>,
 }
 
 /// Namespace capabilities discovered via `describe_namespace`.
@@ -545,6 +558,11 @@ impl NamespaceCapabilities {
             .filter(|limit| *limit > 0)
             .map(|limit| limit as usize)
     }
+}
+
+struct ShutdownRpcContext {
+    join_handle: JoinHandle<()>,
+    first_attempt_done_token: CancellationToken,
 }
 
 /// Resolve the effective poller behavior. When no behavior was configured (`None`), pollers are
@@ -795,6 +813,7 @@ impl Worker {
         );
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
+        let external_wft_slots = ClosableMeteredPermitDealer::new_arc(Arc::new(wft_slots.clone()));
 
         let wf_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let wf_sticky_last_suc_poll_time = Arc::new(AtomicCell::new(None));
@@ -863,7 +882,7 @@ impl Worker {
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
-            wft_slots.clone(),
+            external_wft_slots.clone(),
             external_wft_tx,
             deployment_options,
         );
@@ -898,7 +917,7 @@ impl Worker {
 
         let client_worker_registrator = Arc::new(ClientWorkerRegistrator {
             worker_instance_key,
-            slot_provider: provider,
+            wft_slot_provider: provider,
             heartbeat_manager: worker_heartbeat,
             cancel_activity_slot: cancel_activity_slot.clone(),
             client: RwLock::new(client.clone()),
@@ -919,6 +938,7 @@ impl Worker {
         let worker_shutdown_token = shutdown_token.clone();
         let worker_local_act_mgr = local_act_mgr.clone();
         let worker_capabilities = capabilities.clone();
+        let worker_external_wft_slots = external_wft_slots.clone();
 
         // Build the poller-dependent subsystems lazily. This closure runs once, after namespace
         // capabilities have been fetched (see `Worker::validate`), so the effective poller behavior
@@ -939,20 +959,27 @@ impl Worker {
                                 wf_sticky_last_suc_poll_time.clone(),
                                 capabilities.clone(),
                             )
-                            .boxed();
+                            .map(|r| r.map(|(t, p)| (t, Either::Left(p))));
+                            // Some replay tests combine a mock client with real pollers, and they
+                            // don't need to use the external stream
                             let stream = if !client.is_mock() {
-                                // Some replay tests combine a mock client with real pollers,
-                                // and they don't need to use the external stream
+                                //let external_wft_slots = external_wft_slots.clone();
                                 stream::select(
                                     stream,
-                                    UnboundedReceiverStream::new(external_wft_rx),
+                                    UnboundedReceiverStream::new(external_wft_rx)
+                                        .map(|(t, p)| Ok((t, Either::Right(p))))
+                                        .take_until(async move {
+                                            external_wft_slots.close_complete().await
+                                        }),
                                 )
                                 .left_stream()
                             } else {
+                                external_wft_slots.close();
                                 stream.right_stream()
                             };
                             Some(stream)
                         } else {
+                            external_wft_slots.close();
                             None
                         };
 
@@ -1035,14 +1062,15 @@ impl Worker {
                         });
                         let wfs = wft_stream.map(|stream| {
                             let wft_semaphore = wft_slots.clone();
-                            let wfs = stream.then(move |s| {
+                            let wfs = stream(shutdown_token.child_token()).then(move |s| {
                                 let wft_semaphore = wft_semaphore.clone();
                                 async move {
                                     let permit = wft_semaphore.acquire_owned().await;
-                                    s.map(|s| (s, permit))
+                                    s.map(|s| (s, Either::Left(permit))).map_err(Into::into)
                                 }
                             });
-                            wfs.right_stream()
+                            wfs.chain(stream::once(future::ready(Err(PollerError::PollerStopped))))
+                                .right_stream()
                         });
                         (
                             wfs,
@@ -1158,7 +1186,8 @@ impl Worker {
             client_worker_registrator,
             status: worker_status,
             capabilities: worker_capabilities,
-            shutdown_rpc_handle: Mutex::new(None),
+            shutdown_rpc_context: Mutex::new(None),
+            external_wft_slots: worker_external_wft_slots,
         })
     }
 
@@ -1186,18 +1215,12 @@ impl Worker {
     pub async fn shutdown(&self) {
         self.initiate_shutdown();
 
-        // Ensure the ShutdownWorker RPC completes before waiting for polls to drain,
-        // otherwise graceful poll shutdown deadlocks.
-        let handle = self.shutdown_rpc_handle.lock().take();
-        if let Some(handle) = handle {
-            let _ = handle.await;
-        }
-
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
         if let Some(la_mgr) = &self.local_act_mgr {
             la_mgr.wait_all_outstanding_tasks_finished().await;
         }
+
         // Wait for workflows to finish. If a caller reached shutdown without ever polling, this
         // deref builds the subsystems; the build closure sees the cancelled shutdown token and
         // signals them, so this still terminates promptly.
@@ -1207,14 +1230,49 @@ impl Worker {
                 .await
                 .expect("Workflow processing terminates cleanly");
         }
+
         // Wait for activities to finish
         if let Some(acts) = self.task_subsystems.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
+
         // Wait for nexus tasks to finish
         if let Some(nexus) = self.task_subsystems.nexus_mgr.as_ref() {
             nexus.shutdown().await;
         }
+
+        // Normally, shutdown RPC should finish at about the same time pollers are stopped. However,
+        // it's not strictly guaranteed. When pollers are active, we want to keep retrying this RPC
+        // in hope the server cancels the polls early. After pollers are stopped, we don't want to
+        // delay shutdown on this RPC, so we abort it, but we want to ensure we finished at least
+        // one attempt before doing so. RPC error handling is done inside the task itself.
+        let rpc_context = self.shutdown_rpc_context.lock().take();
+        if let Some(mut rpc_context) = rpc_context {
+            fn handle_join(result: Result<(), JoinError>) {
+                if let Err(e) = result
+                    && let Ok(e) = e.try_into_panic()
+                {
+                    // In debug build, propagate panics.
+                    if cfg!(debug_assertions) {
+                        std::panic::resume_unwind(e);
+                    } else {
+                        warn!(error=?e, "Panic when reporting worker shutdown")
+                    }
+                }
+            }
+
+            select! {
+                res = &mut rpc_context.join_handle => handle_join(res),
+                _ = rpc_context.first_attempt_done_token.cancelled() => {
+                    rpc_context.join_handle.abort();
+                    // In debug build, join to propagate panics.
+                    // In release build, detach as to not slow down the shutdown.
+                    #[cfg(debug_assertions)]
+                    handle_join(rpc_context.join_handle.await);
+                }
+            }
+        }
+
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
@@ -1623,11 +1681,14 @@ impl Worker {
             );
         }
         let already_initiated_shutdown = self.shutdown_token.is_cancelled();
+        // Cancelling this token will also stop polling workflow tasks.
         self.shutdown_token.cancel();
         {
             *self.status.write() = WorkerStatus::ShuttingDown;
         }
-        // First, disable Eager Workflow Start
+
+        // Disable Eager Workflow Start.
+        self.external_wft_slots.close();
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
@@ -1635,13 +1696,13 @@ impl Worker {
                 .unregister_slot_provider(self.worker_instance_key);
         }
 
-        // Push a BumpStream message to the workflow activation queue. This ensures that
-        // any pending workflow activation polls will resolve, even if there are no other inputs.
+        // Bump workflow stream. This ensures that any pending workflow activation polls will
+        // resolve, even if there are no other inputs.
         if let Some(workflows) = self.task_subsystems.workflows.as_ref() {
             workflows.bump_stream();
         }
 
-        // Second, we want to stop polling of both activity and workflow tasks
+        // Stop polling activity tasks.
         if let Some(atm) = self.task_subsystems.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
@@ -1664,8 +1725,8 @@ impl Worker {
         }
 
         // Spawn the ShutdownWorker RPC so the server can complete in-flight polls.
-        // The handle is stored and awaited in shutdown() to ensure completion.
-        let mut guard = self.shutdown_rpc_handle.lock();
+        // The handle is stored and awaited/aborted in shutdown().
+        let mut guard = self.shutdown_rpc_context.lock();
         if guard.is_some() || already_initiated_shutdown {
             return;
         }
@@ -1693,26 +1754,36 @@ impl Worker {
             .heartbeat_manager
             .as_ref()
             .and_then(|hm| (hm.heartbeat_callback)());
-        let handle = tokio::spawn(async move {
-            match client
-                .shutdown_worker(sticky_name, task_queue, task_queue_types, heartbeat)
-                .await
-            {
-                Err(err)
-                    if !matches!(
-                        err.code(),
-                        tonic::Code::Unimplemented | tonic::Code::Unavailable
-                    ) =>
-                {
-                    warn!(
-                        "shutdown_worker rpc errored during worker shutdown: {:?}",
-                        err
-                    );
+
+        let first_attempt_done_token = CancellationToken::new();
+        let first_attempt_done_token_clone = first_attempt_done_token.clone();
+        let join_handle = tokio::spawn(
+            async move {
+                if let Err(e) = client.shutdown_worker(
+                    sticky_name,
+                    task_queue,
+                    task_queue_types,
+                    heartbeat,
+                    Some(RetryCallback::new(move |e| {
+                        if !first_attempt_done_token_clone.is_cancelled() {
+                            warn!(error=?e, "Failed to report worker shutdown on first attempt");
+                            first_attempt_done_token_clone.cancel();
+                        }
+                    }))
+                ).await {
+                    if e.code() == tonic::Code::Unimplemented {
+                        info!("Reporting worker shutdown unsupported by server");
+                    } else {
+                        warn!(error=?e, "Failed to report worker shutdown");
+                    }
                 }
-                _ => {}
             }
+            .in_current_span(),
+        );
+        *guard = Some(ShutdownRpcContext {
+            join_handle,
+            first_attempt_done_token,
         });
-        *guard = Some(handle);
     }
 
     /// Unique identifier for this worker instance.
@@ -2058,7 +2129,7 @@ impl SlotInfoTrait for NexusSlotInfo {
 }
 
 /// Associates slot info/kinds together.
-pub trait SlotKind {
+pub trait SlotKind: Send + Sync + 'static {
     /// The associated info for this kind.
     type Info: SlotInfoTrait;
 
@@ -2205,7 +2276,7 @@ impl WorkerVersioningStrategy {
 
 struct ClientWorkerRegistrator {
     worker_instance_key: Uuid,
-    slot_provider: SlotProvider,
+    wft_slot_provider: SlotProvider,
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     /// Slot filled by the deferred poller build with the activity cancellation callback. Shared
     /// with the worker so it can be resolved lazily once the activity task manager is constructed.
@@ -2218,18 +2289,18 @@ struct ClientWorkerRegistrator {
 
 impl ClientWorker for ClientWorkerRegistrator {
     fn namespace(&self) -> &str {
-        self.slot_provider.namespace()
+        self.wft_slot_provider.namespace()
     }
     fn task_queue(&self) -> &str {
-        self.slot_provider.task_queue()
+        self.wft_slot_provider.task_queue()
     }
 
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
-        self.slot_provider.try_reserve_wft_slot()
+        self.wft_slot_provider.try_reserve_wft_slot()
     }
 
     fn deployment_options(&self) -> Option<temporalio_common::worker::WorkerDeploymentOptions> {
-        self.slot_provider.deployment_options()
+        self.wft_slot_provider.deployment_options()
     }
 
     fn worker_instance_key(&self) -> Uuid {
@@ -2498,11 +2569,19 @@ pub(crate) enum TaskPollers {
     Real,
     #[cfg(any(feature = "test-utilities", test))]
     Mocked {
-        wft_stream: Option<BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>>,
+        wft_stream: Option<MockWftStreamFactory>,
         act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
         nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     },
 }
+
+#[cfg(any(feature = "test-utilities", test))]
+pub(crate) type MockWftStreamFactory = Box<
+    dyn FnOnce(
+            CancellationToken,
+        ) -> BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>
+        + Send,
+>;
 
 fn make_slots_info<SK>(
     dealer: &MeteredPermitDealer<SK>,
@@ -2512,7 +2591,7 @@ fn make_slots_info<SK>(
     total_failed: Arc<AtomicU64>,
 ) -> Option<WorkerSlotsInfo>
 where
-    SK: SlotKind + 'static,
+    SK: SlotKind,
 {
     Some(WorkerSlotsInfo {
         current_available_slots: i32::try_from(slots_available.load(Ordering::Relaxed))
@@ -2541,13 +2620,20 @@ mod tests {
         test_help::test_worker_cfg,
         worker::{
             PollerBehavior,
-            client::mocks::{mock_manual_worker_client, mock_worker_client},
+            client::mocks::{
+                MockManualWorkerClient, mock_manual_worker_client, mock_worker_client,
+                setup_mock_manual_worker_client,
+            },
         },
     };
     use futures_util::FutureExt;
     use temporalio_common::protos::temporal::api::{
         namespace::v1::namespace_info::Capabilities,
         workflowservice::v1::PollActivityTaskQueueResponse,
+    };
+    use tokio::{
+        join,
+        sync::{Notify, oneshot},
     };
 
     #[tokio::test]
@@ -2820,5 +2906,172 @@ mod tests {
             resolve_effective_behavior(Some(autoscaling), &caps),
             autoscaling,
         );
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn shutdown_blocks_until_shutdown_rpc_first_attempt_done(
+        #[values(true, false)] success: bool,
+    ) {
+        let (shutdown_retry_cb_tx, shutdown_retry_cb_rx) = oneshot::channel();
+        let poll_rpc_started = Arc::new(Notify::new());
+        let finish_shutdown_rpc = Arc::new(Notify::new());
+        let finish_poll_rpc = Arc::new(Notify::new());
+
+        let mut mock_client = MockManualWorkerClient::new();
+        {
+            let poll_rpc_started = poll_rpc_started.clone();
+            let finish_shutdown_rpc = finish_shutdown_rpc.clone();
+            let finish_poll_rpc = finish_poll_rpc.clone();
+
+            mock_client.expect_describe_namespace().returning(|| {
+                async {
+                    Ok(DescribeNamespaceResponse {
+                        namespace_info: Some(ApiNamespaceInfo {
+                            capabilities: Some(Capabilities {
+                                worker_poll_complete_on_shutdown: true,
+                                ..Capabilities::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                }
+                .boxed()
+            });
+
+            mock_client
+                .expect_poll_activity_task()
+                .times(1)
+                .return_once(move |opts, _| {
+                    async move {
+                        // Hold the semaphore so that shutdown waits for the poll. Because we're not
+                        // shutting down yet, it should be possible to acquire the permit immediately.
+                        let sem = opts.attempt_semaphore.unwrap();
+                        let _permit = sem.try_acquire().unwrap();
+                        poll_rpc_started.notify_one();
+                        finish_poll_rpc.notified().await;
+                        Ok(PollActivityTaskQueueResponse::default())
+                    }
+                    .boxed()
+                });
+
+            mock_client
+                .expect_shutdown_worker()
+                .times(1)
+                .return_once(move |_, _, _, _, cb| {
+                    async move {
+                        shutdown_retry_cb_tx.send(cb.unwrap()).unwrap();
+                        finish_shutdown_rpc.notified().await;
+                        Ok(Default::default())
+                    }
+                    .boxed()
+                });
+            // this is to block the default expectation
+            mock_client
+                .expect_shutdown_worker()
+                .returning(|_, _, _, _, _| {
+                    panic!("shutdown_worker called more than once");
+                });
+
+            setup_mock_manual_worker_client(&mut mock_client);
+        }
+
+        let cfg = test_worker_cfg()
+            .max_outstanding_activities(1usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new_test(cfg, mock_client);
+        worker.validate().await.unwrap();
+
+        let poll_fut = worker.poll_activity_task();
+        advance_fut!(poll_fut);
+        let shutdown_fut = worker.shutdown();
+        advance_fut!(shutdown_fut);
+
+        let mut shutdown_retry_cb = shutdown_retry_cb_rx.await.unwrap();
+        advance_fut!(poll_fut);
+
+        finish_poll_rpc.notify_one();
+        assert_matches!(poll_fut.await, Err(PollError::ShutDown));
+        advance_fut!(shutdown_fut);
+
+        if success {
+            finish_shutdown_rpc.notify_one();
+        } else {
+            shutdown_retry_cb.call(&tonic::Status::new(tonic::Code::Internal, "boom"));
+        }
+
+        shutdown_fut.await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_proceeds_on_poll_retryable_error() {
+        let (attempt_sem_tx, attempt_sem_rx) = oneshot::channel();
+
+        let mut mock_client = MockManualWorkerClient::new();
+        mock_client.expect_describe_namespace().returning(|| {
+            async {
+                Ok(DescribeNamespaceResponse {
+                    namespace_info: Some(ApiNamespaceInfo {
+                        capabilities: Some(Capabilities {
+                            worker_poll_complete_on_shutdown: true,
+                            ..Capabilities::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            }
+            .boxed()
+        });
+
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .return_once(move |opts, _| {
+                async move {
+                    attempt_sem_tx
+                        .send(opts.attempt_semaphore.unwrap())
+                        .unwrap();
+                    future::pending().await
+                }
+                .boxed()
+            });
+
+        setup_mock_manual_worker_client(&mut mock_client);
+
+        let cfg = test_worker_cfg()
+            .max_outstanding_activities(1usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new_test(cfg, mock_client);
+        worker.validate().await.unwrap();
+
+        let poll_fut = worker.poll_activity_task();
+        advance_fut!(poll_fut); // necessary to populate the channel
+        let sem = attempt_sem_rx.await.unwrap();
+
+        // By acquiring and releasing the semaphore, we are simulating RPC attempts. Before
+        // shutdown, acquiring should always succeed immediately and the future should stay blocked.
+        let permit = sem.try_acquire().unwrap();
+        advance_fut!(poll_fut);
+        drop(permit);
+        advance_fut!(poll_fut);
+        let permit = sem.try_acquire().unwrap();
+        advance_fut!(poll_fut);
+        drop(permit);
+        advance_fut!(poll_fut);
+        let permit = sem.try_acquire().unwrap();
+
+        // Shutting down - both futures should stay blocked until we release the permit.
+        let shutdown_fut = worker.shutdown();
+        advance_fut!(shutdown_fut);
+        advance_fut!(poll_fut);
+        advance_fut!(shutdown_fut);
+
+        drop(permit);
+        let (poll_result, _) = join!(poll_fut, shutdown_fut);
+        assert_matches!(poll_result, Err(PollError::ShutDown));
     }
 }

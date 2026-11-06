@@ -295,7 +295,7 @@ pub struct CustomSlotSupplierCallbacks {
 }
 
 impl CustomSlotSupplierCallbacksImpl {
-    fn into_ss<SK: SlotKind + Send + Sync + 'static>(
+    fn into_ss<SK: SlotKind>(
         self,
     ) -> Arc<dyn temporalio_sdk_core::SlotSupplier<SlotKind = SK> + Send + Sync + 'static> {
         Arc::new(CustomSlotSupplier {
@@ -374,13 +374,13 @@ enum SlotReserveOperationState {
     Completed(NonZero<usize>),
 }
 
-struct CancelReserveGuard<'a, SK: SlotKind + Send + Sync> {
+struct CancelReserveGuard<'a, SK: SlotKind> {
     slot_supplier: &'a CustomSlotSupplier<SK>,
     completion_ctx: Arc<SlotReserveCompletionCtx>,
     completed: bool,
 }
 
-impl<'a, SK: SlotKind + Send + Sync> Drop for CancelReserveGuard<'a, SK> {
+impl<'a, SK: SlotKind> Drop for CancelReserveGuard<'a, SK> {
     fn drop(&mut self) {
         // do not cancel if already completed
         if !self.completed {
@@ -414,7 +414,7 @@ impl<'a, SK: SlotKind + Send + Sync> Drop for CancelReserveGuard<'a, SK> {
 }
 
 #[async_trait::async_trait]
-impl<SK: SlotKind + Send + Sync> temporalio_sdk_core::SlotSupplier for CustomSlotSupplier<SK> {
+impl<SK: SlotKind> temporalio_sdk_core::SlotSupplier for CustomSlotSupplier<SK> {
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
@@ -499,7 +499,7 @@ impl<SK: SlotKind + Send + Sync> temporalio_sdk_core::SlotSupplier for CustomSlo
     }
 }
 
-impl<SK: SlotKind + Send + Sync> CustomSlotSupplier<SK> {
+impl<SK: SlotKind> CustomSlotSupplier<SK> {
     fn convert_reserve_ctx(ctx: &dyn SlotReservationContext) -> SlotReserveCtx {
         SlotReserveCtx {
             slot_type: match SK::kind() {
@@ -1405,9 +1405,7 @@ impl TryFrom<&TunerHolder> for temporalio_sdk_core::TunerHolder {
     }
 }
 
-impl<SK: SlotKind + Send + Sync + 'static> TryFrom<SlotSupplier>
-    for temporalio_sdk_core::SlotSupplierOptions<SK>
-{
+impl<SK: SlotKind> TryFrom<SlotSupplier> for temporalio_sdk_core::SlotSupplierOptions<SK> {
     type Error = anyhow::Error;
 
     fn try_from(

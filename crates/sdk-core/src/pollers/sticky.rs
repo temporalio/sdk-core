@@ -1,11 +1,16 @@
-use super::{LongPollBuffer, Poller};
+use super::{LongPollBuffer, Poller, PollerError, PollerResult};
 use crate::{
     WorkerConfig,
     abstractions::OwnedMeteredSemPermit,
     worker::{PollerBehavior, SlotKind},
 };
-use std::{fmt::Debug, sync::OnceLock};
-use tokio::sync::watch;
+use futures_util::{
+    Stream, StreamExt,
+    stream::{self, BoxStream},
+};
+use std::{fmt::Debug, future, sync::OnceLock};
+use sync_wrapper::SyncWrapper;
+use tokio::sync::{oneshot, watch};
 
 /// Given an already-resolved task poller `behavior` (see
 /// [crate::worker::resolve_effective_behavior]), applies the sticky/non-sticky split when it is a
@@ -36,11 +41,91 @@ pub(crate) fn sticky_poller_behavior(
     }
 }
 
+type StickyTaskPollerStream<T, SK> =
+    BoxStream<'static, PollerResult<(T, OwnedMeteredSemPermit<SK>)>>;
+
 /// A poller capable of polling on a sticky and a nonsticky queue simultaneously.
-#[derive(derive_more::Constructor)]
 pub(crate) struct StickyTaskPoller<T, SK: SlotKind> {
-    normal_poller: LongPollBuffer<T, SK>,
-    sticky_poller: Option<LongPollBuffer<T, SK>>,
+    stream: SyncWrapper<StickyTaskPollerStream<T, SK>>,
+    normal_poller_rx: oneshot::Receiver<Box<LongPollBuffer<T, SK>>>,
+    sticky_poller_rx: Option<oneshot::Receiver<Box<LongPollBuffer<T, SK>>>>,
+}
+
+impl<T, SK> StickyTaskPoller<T, SK>
+where
+    T: Send + Sync + Debug + 'static,
+    SK: SlotKind + 'static,
+{
+    pub(crate) fn new(
+        normal_poller: LongPollBuffer<T, SK>,
+        sticky_poller: Option<LongPollBuffer<T, SK>>,
+    ) -> Self {
+        let (normal_poller_tx, normal_poller_rx) = oneshot::channel();
+        let normal_stream = Self::streamify(normal_poller, normal_poller_tx, false);
+
+        let (combined_stream, sticky_poller_rx) = if let Some(sticky_poller) = sticky_poller {
+            let (sticky_poller_tx, sticky_poller_rx) = oneshot::channel();
+            let sticky_stream = Self::streamify(sticky_poller, sticky_poller_tx, true);
+            (
+                stream::select(normal_stream, sticky_stream).left_stream(),
+                Some(sticky_poller_rx),
+            )
+        } else {
+            (normal_stream.right_stream(), None)
+        };
+
+        // Each poller will send its own PollerStopped; we're suppressing that and sending a single
+        // one at the very end.
+        let stream = combined_stream
+            .filter(|r| future::ready(!matches!(r, Err(PollerError::PollerStopped))))
+            .chain(stream::once(future::ready(Err(PollerError::PollerStopped))))
+            .boxed()
+            .into();
+
+        Self {
+            stream,
+            normal_poller_rx,
+            sticky_poller_rx,
+        }
+    }
+
+    fn streamify<P, Item>(
+        poller: P,
+        tx: oneshot::Sender<Box<P>>,
+        is_sticky: bool,
+    ) -> impl Stream<Item = PollerResult<Item>>
+    where
+        P: Poller<Item>,
+        Item: Send + Sync + 'static,
+    {
+        struct State<P_> {
+            poller: Box<P_>,
+            tx: oneshot::Sender<Box<P_>>,
+            is_sticky: bool,
+        }
+        let state = State {
+            poller: Box::new(poller),
+            tx,
+            is_sticky,
+        };
+
+        stream::unfold(state, async |mut state| match state.poller.poll().await {
+            Some(r) => Some((r, state)),
+            None => {
+                if state.tx.send(state.poller).is_err() {
+                    Self::warn_channel_closed(state.is_sticky);
+                }
+                None
+            }
+        })
+    }
+
+    fn warn_channel_closed(is_sticky: bool) {
+        warn!(
+            "{} poller shutdown channel closed unexpectedly, worker might not shut down cleanly",
+            if is_sticky { "Sticky" } else { "Normal" }
+        );
+    }
 }
 
 #[async_trait::async_trait]
@@ -49,34 +134,26 @@ where
     T: Send + Sync + Debug + 'static,
     SK: SlotKind + 'static,
 {
-    async fn poll(&self) -> Option<super::Result<(T, OwnedMeteredSemPermit<SK>)>> {
-        if let Some(sq) = self.sticky_poller.as_ref() {
-            tokio::select! {
-                r = self.normal_poller.poll() => r,
-                r = sq.poll() => r,
+    async fn poll(&mut self) -> Option<PollerResult<(T, OwnedMeteredSemPermit<SK>)>> {
+        self.stream.get_mut().next().await
+    }
+
+    async fn shutdown(self) {
+        match self.normal_poller_rx.await {
+            Ok(p) => p.shutdown().await,
+            Err(_) => Self::warn_channel_closed(false),
+        }
+
+        if let Some(rx) = self.sticky_poller_rx {
+            match rx.await {
+                Ok(p) => p.shutdown().await,
+                Err(_) => Self::warn_channel_closed(true),
             }
-        } else {
-            self.normal_poller.poll().await
-        }
-    }
-
-    fn notify_shutdown(&self) {
-        self.normal_poller.notify_shutdown();
-        if let Some(sq) = self.sticky_poller.as_ref() {
-            sq.notify_shutdown();
-        }
-    }
-
-    async fn shutdown(mut self) {
-        self.normal_poller.shutdown().await;
-        if let Some(sq) = self.sticky_poller {
-            sq.shutdown().await;
         }
     }
 
     async fn shutdown_box(self: Box<Self>) {
-        let this = *self;
-        this.shutdown().await;
+        self.shutdown().await;
     }
 }
 
@@ -205,7 +282,11 @@ impl StickyPollerShared {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::test_worker_cfg;
+    use crate::{
+        WorkflowSlotKind, advance_fut, pollers::PollWorkflowTaskQueueResponse,
+        test_help::test_worker_cfg,
+    };
+    use futures_util::FutureExt;
 
     #[test]
     fn max_polls_calculated_properly() {
@@ -222,5 +303,48 @@ mod tests {
             sticky_poller_behavior(PollerBehavior::SimpleMaximum(5), &cfg, true),
             PollerBehavior::SimpleMaximum(4)
         );
+    }
+
+    #[rstest::rstest]
+    #[case::normal_ends_first(false)]
+    #[case::sticky_ends_first(false)]
+    #[tokio::test]
+    async fn drains_both_normal_and_sticky_pollers_before_returning_none(
+        #[case] sticky_ends_first: bool,
+    ) {
+        let first_msg = "first message";
+        let first_error = Err(tonic::Status::internal(first_msg).into());
+        let first_poller =
+            LongPollBuffer::<PollWorkflowTaskQueueResponse, WorkflowSlotKind>::mock([
+                future::ready(first_error),
+            ]);
+
+        let second_msg = "second message";
+        let second_error = Err(tonic::Status::internal(second_msg).into());
+        let (do_second_poll_tx, do_second_poll_rx) = oneshot::channel::<()>();
+        let second_poller = LongPollBuffer::mock([async move {
+            do_second_poll_rx.await.unwrap();
+            second_error
+        }]);
+
+        let mut poller = if sticky_ends_first {
+            StickyTaskPoller::new(second_poller, Some(first_poller))
+        } else {
+            StickyTaskPoller::new(first_poller, Some(second_poller))
+        };
+
+        assert_matches!(poller.poll().await, Some(Err(PollerError::Tonic(e))) if e.message() == first_msg);
+
+        {
+            let poll_fut = poller.poll();
+            advance_fut!(poll_fut);
+            do_second_poll_tx.send(()).unwrap();
+            assert_matches!(poll_fut.await, Some(Err(PollerError::Tonic(e))) if e.message() == second_msg);
+        }
+
+        assert_matches!(poller.poll().await, Some(Err(PollerError::PollerStopped)));
+        assert_matches!(poller.poll().await, None);
+
+        poller.shutdown().await;
     }
 }

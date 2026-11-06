@@ -3,11 +3,12 @@
 pub(crate) mod take_cell;
 
 use crate::{MetricsContext, worker::*};
+use parking_lot::Mutex;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use temporalio_common::{telemetry::metrics::TemporalMeter, worker::WorkerDeploymentVersion};
@@ -80,7 +81,7 @@ impl std::fmt::Display for SlotSupplierKind {
 
 impl<SK> MeteredPermitDealer<SK>
 where
-    SK: SlotKind + 'static,
+    SK: SlotKind,
 {
     pub(crate) fn new(
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
@@ -280,9 +281,13 @@ impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
 /// Close completes when all permits have been returned.
 pub(crate) struct ClosableMeteredPermitDealer<SK: SlotKind> {
     inner: Arc<MeteredPermitDealer<SK>>,
-    outstanding_permits: AtomicUsize,
-    close_requested: AtomicBool,
+    state: Mutex<ClosableMeteredPermitDealerState>,
     close_complete_token: CancellationToken,
+}
+
+struct ClosableMeteredPermitDealerState {
+    outstanding_permits: usize,
+    close_requested: bool,
 }
 
 impl<SK> ClosableMeteredPermitDealer<SK>
@@ -292,17 +297,14 @@ where
     pub(crate) fn new_arc(sem: Arc<MeteredPermitDealer<SK>>) -> Arc<Self> {
         Arc::new(Self {
             inner: sem,
-            outstanding_permits: Default::default(),
-            close_requested: AtomicBool::new(false),
+            state: Mutex::new(ClosableMeteredPermitDealerState {
+                outstanding_permits: 0,
+                close_requested: false,
+            }),
             close_complete_token: CancellationToken::new(),
         })
     }
-}
 
-impl<SK> ClosableMeteredPermitDealer<SK>
-where
-    SK: SlotKind + 'static,
-{
     #[cfg(test)]
     pub(crate) fn unused_permits(&self) -> Option<usize> {
         self.inner.unused_permits()
@@ -310,8 +312,10 @@ where
 
     /// Request to close the semaphore and prevent new permits from being acquired.
     pub(crate) fn close(&self) {
-        self.close_requested.store(true, Ordering::Release);
-        if self.outstanding_permits.load(Ordering::Acquire) == 0 {
+        let mut state = self.state.lock();
+        state.close_requested = true;
+        if state.outstanding_permits == 0 {
+            drop(state);
             self.close_complete_token.cancel();
         }
     }
@@ -325,13 +329,16 @@ where
     pub(crate) fn try_acquire_owned(
         self: &Arc<Self>,
     ) -> Result<TrackedOwnedMeteredSemPermit<SK>, ()> {
-        if self.close_requested.load(Ordering::Acquire) {
+        let mut state = self.state.lock();
+        if state.close_requested {
             return Err(());
         }
-        self.outstanding_permits.fetch_add(1, Ordering::Release);
+        state.outstanding_permits += 1;
+        drop(state);
+
         let res = self.inner.try_acquire_owned();
         if res.is_err() {
-            self.outstanding_permits.fetch_sub(1, Ordering::Release);
+            self.release_outstanding_permit();
         }
         res.map(|permit| TrackedOwnedMeteredSemPermit {
             inner: Some(permit),
@@ -339,16 +346,23 @@ where
         })
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn available_permits(&self) -> Option<usize> {
+        self.inner.available_permits()
+    }
+
     fn on_permit_dropped(self: &Arc<Self>) -> Box<dyn Fn() + Send + Sync> {
         let sem = self.clone();
-        Box::new(move || {
-            sem.outstanding_permits.fetch_sub(1, Ordering::Release);
-            if sem.close_requested.load(Ordering::Acquire)
-                && sem.outstanding_permits.load(Ordering::Acquire) == 0
-            {
-                sem.close_complete_token.cancel();
-            }
-        })
+        Box::new(move || sem.release_outstanding_permit())
+    }
+
+    fn release_outstanding_permit(&self) {
+        let mut state = self.state.lock();
+        state.outstanding_permits -= 1;
+        if state.close_requested && state.outstanding_permits == 0 {
+            drop(state);
+            self.close_complete_token.cancel();
+        }
     }
 }
 
@@ -469,9 +483,7 @@ pub(crate) mod tests {
     };
     use futures_util::FutureExt;
 
-    pub(crate) fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
-        size: usize,
-    ) -> MeteredPermitDealer<SK> {
+    pub(crate) fn fixed_size_permit_dealer<SK: SlotKind>(size: usize) -> MeteredPermitDealer<SK> {
         MeteredPermitDealer::new(
             Arc::new(FixedSizeSlotSupplier::new(size)),
             MetricsContext::no_op(),
@@ -486,10 +498,10 @@ pub(crate) mod tests {
         let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         let perm = sem.try_acquire_owned().unwrap();
-        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        let permits = sem.state.lock().outstanding_permits;
         assert_eq!(permits, 1);
         drop(perm);
-        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        let permits = sem.state.lock().outstanding_permits;
         assert_eq!(permits, 0);
     }
 

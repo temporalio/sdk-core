@@ -53,6 +53,7 @@ relevant information.
   nondeterminism while retaining compatibility with histories recorded before these checks.
 
 ### Fixed
+* Fixed dropping workflow tasks during shutdown in certain scenarios.
 * A workflow task failure reported with the cause `WORKFLOW_TASK_FAILED_CAUSE_EXTERNAL_STORAGE_FAILURE`
   is now counted on `workflow_task_execution_failed` with `failure_reason="ExternalStorageError"`,
   matching activity failures with the storage cause. It was previously counted as `WorkflowError`.
@@ -100,6 +101,9 @@ relevant information.
   each series with a suffix, `_native` by default, so it never shares a name with the fixed-bucket
   series it replaces. It cannot be combined with histogram bucket overrides. Explicit buckets
   remain the default.
+
+### Changed
+* Worker now retries `ShutdownWorker` RPC on retryable errors until the task pollers finish.
 
 ## [0.10.0] - 2026-10-06
 

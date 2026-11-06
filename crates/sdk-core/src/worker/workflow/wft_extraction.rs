@@ -1,5 +1,6 @@
 use crate::{
-    abstractions::OwnedMeteredSemPermit,
+    abstractions::{OwnedMeteredSemPermit, TrackedOwnedMeteredSemPermit},
+    pollers::PollerResult,
     protosext::ValidPollWFTQResponse,
     worker::{
         WorkflowSlotKind,
@@ -11,7 +12,8 @@ use crate::{
     },
 };
 use futures_util::{FutureExt, Stream, StreamExt, stream, stream::PollNext};
-use std::{future, sync::Arc};
+use itertools::Either;
+use std::sync::Arc;
 use temporalio_common::protos::coresdk::WorkflowSlotInfo;
 use tracing::Span;
 
@@ -30,23 +32,21 @@ pub(super) enum WFTExtractorOutput {
         paginator: HistoryPaginator,
         update: HistoryUpdate,
         span: Span,
-        rc: Arc<HistfetchRC>,
+        _rc: Arc<HistfetchRC>,
     },
     FailedFetch {
         run_id: String,
         err: tonic::Status,
         auto_reply_fail: Option<UnstoredWftFailInfo>,
     },
-    PollerDead,
 }
 
-pub(crate) type WFTStreamIn = Result<
-    (
-        ValidPollWFTQResponse,
-        OwnedMeteredSemPermit<WorkflowSlotKind>,
-    ),
-    tonic::Status,
->;
+pub(crate) type WFTStreamIn = PollerResult<(
+    ValidPollWFTQResponse,
+    // TODO: Use only ClosableMeteredPermitDealer/TrackedOwnedMeteredSemPermit for all WFTs
+    // so that we can simplify shutdown.
+    Either<OwnedMeteredSemPermit<WorkflowSlotKind>, TrackedOwnedMeteredSemPermit<WorkflowSlotKind>>,
+)>;
 #[derive(derive_more::From, Debug)]
 pub(super) enum HistoryFetchReq {
     Full(Box<CacheMissFetchReq>, Arc<HistfetchRC>),
@@ -62,48 +62,44 @@ impl WFTExtractor {
         max_fetch_concurrency: usize,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         fetch_stream: impl Stream<Item = HistoryFetchReq> + Send + 'static,
-    ) -> impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static {
+    ) -> impl Stream<Item = PollerResult<WFTExtractorOutput>> + Send + 'static {
         let fetch_client = client.clone();
-        let wft_stream = wft_stream
-            .map(move |stream_in| {
-                let client = client.clone();
-                async move {
-                    match stream_in {
-                        Ok((wft, permit)) => {
-                            let run_id = wft.workflow_execution.run_id.clone();
-                            let fail_info = UnstoredWftFailInfo {
-                                task_token: wft.task_token.clone(),
-                                attempt: wft.attempt,
-                                workflow_type: wft.workflow_type.clone(),
-                            };
-                            Ok(match HistoryPaginator::from_poll(wft, client).await {
-                                Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
-                                    permit: permit.into_used(WorkflowSlotInfo {
-                                        workflow_type: prep.workflow_type.clone(),
-                                        is_sticky: prep.is_incremental(),
-                                    }),
-                                    work: prep,
-                                    paginator: pag,
+        let wft_stream = wft_stream.map(move |stream_in| {
+            let client = client.clone();
+            async move {
+                match stream_in {
+                    Ok((wft, permit)) => {
+                        let run_id = wft.workflow_execution.run_id.clone();
+                        let fail_info = UnstoredWftFailInfo {
+                            task_token: wft.task_token.clone(),
+                            attempt: wft.attempt,
+                            workflow_type: wft.workflow_type.clone(),
+                        };
+                        let permit = match permit {
+                            Either::Left(p) => p,
+                            Either::Right(p) => p.into(),
+                        };
+                        Ok(match HistoryPaginator::from_poll(wft, client).await {
+                            Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
+                                permit: permit.into_used(WorkflowSlotInfo {
+                                    workflow_type: prep.workflow_type.clone(),
+                                    is_sticky: prep.is_incremental(),
                                 }),
-                                Err(err) => WFTExtractorOutput::FailedFetch {
-                                    run_id,
-                                    err,
-                                    auto_reply_fail: Some(fail_info),
-                                },
-                            })
-                        }
-                        Err(e) => Err(e),
+                                work: prep,
+                                paginator: pag,
+                            }),
+                            Err(err) => WFTExtractorOutput::FailedFetch {
+                                run_id,
+                                err,
+                                auto_reply_fail: Some(fail_info),
+                            },
+                        })
                     }
+                    Err(e) => Err(e),
                 }
-                // This is... unattractive, but lets us avoid boxing all the futs in the stream
-                .left_future()
-                .left_future()
-            })
-            .chain(stream::iter([future::ready(Ok(
-                WFTExtractorOutput::PollerDead,
-            ))
-            .right_future()
-            .left_future()]));
+            }
+            .left_future()
+        });
 
         stream::select_with_strategy(
             wft_stream,
@@ -135,7 +131,7 @@ impl WFTExtractor {
                                     paginator: req.paginator,
                                     update,
                                     span: req.span,
-                                    rc,
+                                    _rc: rc,
                                 },
                                 Err(err) => WFTExtractorOutput::FailedFetch {
                                     run_id: req.paginator.run_id,

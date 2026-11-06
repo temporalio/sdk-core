@@ -37,7 +37,7 @@ use temporalio_sdk::{
     runtime::{AutoscalingOptions, PollerBehavior},
 };
 use temporalio_sdk_core::{
-    CoreRuntime, RuntimeOptions, TunerHolder,
+    CoreRuntime, PollError, RuntimeOptions, TunerHolder, advance_fut,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker, prost_dur,
     test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown, schedule_activity_cmd},
@@ -510,4 +510,68 @@ async fn replace_client_works_after_polling_failure() {
     if let Err(e) = result {
         std::panic::resume_unwind(e);
     }
+}
+
+#[temporalio_macros::cloud_test_exclusion(crate::CloudTestExclusionReason::RequiresLocalServer)]
+#[tokio::test]
+async fn stopping_server_does_not_prevent_worker_shutdown() {
+    let server_config = TemporalDevServerConfig::builder()
+        .exe(default_cached_download())
+        // We need to lower the poll timeout so the poll call rolls over
+        .extra_args(vec![
+            "--dynamic-config-value".to_string(),
+            "matching.longPollExpirationInterval=\"1s\"".to_string(),
+        ])
+        .build();
+    let mut server = Some(
+        server_config
+            .start_server_with_output(Stdio::null(), Stdio::null())
+            .await
+            .unwrap(),
+    );
+
+    let result = std::panic::AssertUnwindSafe(async {
+        let url = Url::parse(&format!("http://{}", server.as_ref().unwrap().target)).unwrap();
+        let opts = ConnectionOptions::new(url)
+            .identity("integ_tester".to_owned())
+            .client_name("temporal-core".to_owned())
+            .client_version("0.1.0".to_owned())
+            .build();
+        let connection = Connection::connect(opts).await.unwrap();
+        let client_opts = temporalio_client::ClientOptions::new("default").build();
+        let client = Client::new(connection, client_opts).unwrap();
+        let worker = init_worker(
+            init_integ_telem().unwrap(),
+            integ_worker_config("my-task-queue"),
+            client.connection().clone(),
+        )
+        .unwrap();
+
+        // Validate worker so that it doesn't refuse to start polling on dead connection.
+        worker.validate().await.unwrap();
+
+        // Shutdown server.
+        server.take().unwrap().shutdown().await.unwrap();
+
+        // Before worker shutdown, polling should hang instead of failing.
+        let act_fut = worker.poll_workflow_activation();
+        advance_fut!(act_fut);
+
+        // After worker shutdown, polling should stop.
+        worker.initiate_shutdown();
+        assert_matches!(act_fut.await, Err(PollError::ShutDown));
+
+        drain_pollers_and_shutdown(&worker).await;
+    })
+    .catch_unwind()
+    .await;
+
+    let server_shutdown_result = match server {
+        Some(mut s) => s.shutdown().await,
+        None => Ok(()),
+    };
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
+    server_shutdown_result.unwrap();
 }
