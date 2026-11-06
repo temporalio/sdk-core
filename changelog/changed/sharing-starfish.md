@@ -1,1 +1,1 @@
-Autoscaling poller pools now report their current poller target to the server on each poll and in the worker heartbeat, letting the server spread poller scaling suggestions across the workers on a task queue instead of concentrating them on whichever worker happens to receive the most tasks.
+Autoscaling poller pools now report their current poller target to the server on each poll and in the worker heartbeat. (We'll use this count on the server side for now for load balancing pollers between workers, and for creating a per-worker poller count metric.)
