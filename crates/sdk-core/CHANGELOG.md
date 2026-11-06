@@ -58,6 +58,8 @@ relevant information.
   matching activity failures with the storage cause. It was previously counted as `WorkflowError`.
 * Ephemeral dev and test servers now complete the automatic port reservation handshake on Linux
   and macOS before starting, preventing intermittent address-in-use errors during TCP teardown.
+* Downloading an ephemeral dev or test server binary now retries transient HTTP failures, such as a
+  `503` returned while a release is rolling out, with backoff instead of failing on the first attempt.
 * Resource-based worker tuners now read CPU usage and quotas from standard cgroup v1 mounts. Workers
   on cgroup v1 systems no longer fall back to host CPU usage and admit work based on understated
   container load.
