@@ -1,9 +1,10 @@
-use crate::client::{BoxError, S3StorageDriverClient};
+use crate::client::S3StorageDriverClient;
 use futures_util::future::{BoxFuture, try_join_all};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
     num::NonZeroUsize,
     sync::Arc,
 };
@@ -16,7 +17,7 @@ use temporalio_common::{
 };
 
 const DRIVER_TYPE: &str = "aws.s3driver";
-const DEFAULT_MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
+const DEFAULT_MAX_PAYLOAD_SIZE: NonZeroUsize = NonZeroUsize::new(50 * 1024 * 1024).unwrap();
 const CLAIM_BUCKET: &str = "bucket";
 const CLAIM_KEY: &str = "key";
 const CLAIM_HASH_ALGORITHM: &str = "hash_algorithm";
@@ -25,6 +26,59 @@ const NULL_SEGMENT: &str = "null";
 const SAFE_SPECIAL_CHARACTERS: &[u8] = b"!-_.*'()";
 
 type BucketSelector = dyn Fn(&StorageDriverStoreContext, &Payload) -> String + Send + Sync;
+
+/// The bucket an [`S3StorageDriver`] stores payloads in.
+#[derive(Clone)]
+pub enum Bucket {
+    /// Store every payload in this bucket.
+    Name(String),
+    /// Call this function to choose the bucket for each payload.
+    Selector(Arc<BucketSelector>),
+}
+
+impl Bucket {
+    /// Choose the bucket for each payload with the given function.
+    pub fn selector(
+        selector: impl Fn(&StorageDriverStoreContext, &Payload) -> String + Send + Sync + 'static,
+    ) -> Self {
+        Self::Selector(Arc::new(selector))
+    }
+}
+
+impl From<&str> for Bucket {
+    fn from(name: &str) -> Self {
+        Self::Name(name.to_owned())
+    }
+}
+
+impl From<String> for Bucket {
+    fn from(name: String) -> Self {
+        Self::Name(name)
+    }
+}
+
+/// Options for creating an [`S3StorageDriver`].
+///
+/// This API is experimental and may change in the future.
+#[derive(Clone, bon::Builder)]
+#[builder(state_mod(vis = "pub"))]
+#[non_exhaustive]
+pub struct S3StorageDriverOptions {
+    /// Client that performs the S3 requests.
+    pub client: Arc<dyn S3StorageDriverClient>,
+    /// Bucket to store payloads in, as a name or a [`Bucket::selector`].
+    #[builder(into)]
+    pub bucket: Bucket,
+    /// Driver instance name written into history. Defaults to `aws.s3driver`. Only change this
+    /// when registering multiple S3 drivers with different configurations on the same external
+    /// storage.
+    #[builder(into, default = DRIVER_TYPE.to_owned())]
+    pub driver_name: String,
+    /// Maximum serialized payload size, in bytes. Storing a larger payload fails. Defaults to 50
+    /// MiB.
+    #[builder(default = DEFAULT_MAX_PAYLOAD_SIZE)]
+    pub max_payload_size: NonZeroUsize,
+}
 
 /// Errors raised by [`S3StorageDriver`], returned inside [`StorageDriverError`].
 #[derive(Debug, thiserror::Error)]
@@ -79,7 +133,7 @@ pub enum S3StorageDriverError {
         client_context: String,
         /// The client error.
         #[source]
-        source: BoxError,
+        source: Box<dyn Error + Send + Sync>,
     },
     /// The client failed to retrieve an object.
     #[error("S3StorageDriver retrieve failed [bucket={bucket}, key={key}{client_context}]")]
@@ -92,7 +146,7 @@ pub enum S3StorageDriverError {
         client_context: String,
         /// The client error.
         #[source]
-        source: BoxError,
+        source: Box<dyn Error + Send + Sync>,
     },
     /// A retrieved object does not match the hash in its claim.
     #[error(
@@ -122,44 +176,20 @@ pub enum S3StorageDriverError {
 #[derive(Clone)]
 pub struct S3StorageDriver {
     client: Arc<dyn S3StorageDriverClient>,
-    bucket_selector: Arc<BucketSelector>,
+    bucket: Bucket,
     name: String,
     max_payload_size: usize,
 }
 
 impl S3StorageDriver {
-    /// Create a driver that stores every payload in one bucket.
-    pub fn new(client: Arc<dyn S3StorageDriverClient>, bucket: impl Into<String>) -> Self {
-        let bucket = bucket.into();
-        Self::with_bucket_selector(client, move |_, _| bucket.clone())
-    }
-
-    /// Create a driver that chooses the bucket for each payload.
-    pub fn with_bucket_selector(
-        client: Arc<dyn S3StorageDriverClient>,
-        bucket_selector: impl Fn(&StorageDriverStoreContext, &Payload) -> String + Send + Sync + 'static,
-    ) -> Self {
+    /// Create a driver with the given options.
+    pub fn new(options: S3StorageDriverOptions) -> Self {
         Self {
-            client,
-            bucket_selector: Arc::new(bucket_selector),
-            name: DRIVER_TYPE.to_owned(),
-            max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE,
+            client: options.client,
+            bucket: options.bucket,
+            name: options.driver_name,
+            max_payload_size: options.max_payload_size.get(),
         }
-    }
-
-    /// Set the driver instance name written into history. Defaults to `aws.s3driver`. Only change
-    /// this when registering multiple S3 drivers with different configurations on the same
-    /// external storage.
-    pub fn with_driver_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Set the maximum serialized payload size, in bytes. Storing a larger payload fails. Defaults
-    /// to 50 MiB.
-    pub fn with_max_payload_size(mut self, max_payload_size: NonZeroUsize) -> Self {
-        self.max_payload_size = max_payload_size.get();
-        self
     }
 
     fn stored_object(
@@ -168,7 +198,10 @@ impl S3StorageDriver {
         mut payload: Payload,
         context_segments: &str,
     ) -> Result<StoredObject, S3StorageDriverError> {
-        let bucket = (self.bucket_selector)(context, &payload);
+        let bucket = match &self.bucket {
+            Bucket::Name(name) => name.clone(),
+            Bucket::Selector(selector) => selector(context, &payload),
+        };
         let data = serialize_payload(&mut payload);
         if data.len() > self.max_payload_size {
             return Err(S3StorageDriverError::PayloadTooLarge {
@@ -350,9 +383,9 @@ fn validate_claim(claim: &StorageDriverClaim) -> Result<(), S3StorageDriverError
 
 /// Serializes a payload with its metadata entries sorted by key.
 fn serialize_payload(payload: &mut Payload) -> Vec<u8> {
+    let mut data = Vec::with_capacity(payload.encoded_len());
     let mut metadata: Vec<_> = std::mem::take(&mut payload.metadata).into_iter().collect();
     metadata.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-    let mut data = Vec::new();
     for (key, value) in &metadata {
         let entry = Payload {
             metadata: HashMap::from([(key.clone(), value.clone())]),
@@ -508,7 +541,7 @@ mod tests {
             bucket: &'a str,
             key: &'a str,
             data: Vec<u8>,
-        ) -> BoxFuture<'a, Result<(), BoxError>> {
+        ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
             self.record_request();
             self.inner.put_object(bucket, key, data)
         }
@@ -517,7 +550,7 @@ mod tests {
             &'a self,
             bucket: &'a str,
             key: &'a str,
-        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+        ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
             self.record_request();
             self.inner.object_exists(bucket, key)
         }
@@ -526,7 +559,7 @@ mod tests {
             &'a self,
             bucket: &'a str,
             key: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+        ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
             self.record_request();
             self.inner.get_object(bucket, key)
         }
@@ -563,7 +596,7 @@ mod tests {
             _: &'a str,
             _: &'a str,
             _: Vec<u8>,
-        ) -> BoxFuture<'a, Result<(), BoxError>> {
+        ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
             future::ready(Ok(())).boxed()
         }
 
@@ -571,7 +604,7 @@ mod tests {
             &'a self,
             _: &'a str,
             _: &'a str,
-        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+        ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
             async move {
                 self.request_count.fetch_add(1, Ordering::SeqCst);
                 let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
@@ -594,7 +627,7 @@ mod tests {
             &'a self,
             _: &'a str,
             _: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+        ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
             unimplemented!()
         }
     }
@@ -611,7 +644,7 @@ mod tests {
             bucket: &'a str,
             key: &'a str,
             data: Vec<u8>,
-        ) -> BoxFuture<'a, Result<(), BoxError>> {
+        ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
             self.put_count.fetch_add(1, Ordering::SeqCst);
             self.objects
                 .lock()
@@ -624,7 +657,7 @@ mod tests {
             &'a self,
             bucket: &'a str,
             key: &'a str,
-        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+        ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
             let exists = self
                 .objects
                 .lock()
@@ -637,7 +670,7 @@ mod tests {
             &'a self,
             bucket: &'a str,
             key: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+        ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
             let data = self.objects.lock().unwrap()[&(bucket.to_owned(), key.to_owned())].clone();
             future::ready(Ok(data)).boxed()
         }
@@ -649,7 +682,7 @@ mod tests {
     }
 
     impl FailingS3Client {
-        fn fail<'a, T: Send + 'a>(&self) -> BoxFuture<'a, Result<T, BoxError>> {
+        fn fail<'a, T: Send + 'a>(&self) -> BoxFuture<'a, Result<T, Box<dyn Error + Send + Sync>>> {
             self.request_count.fetch_add(1, Ordering::SeqCst);
             future::ready(Err("access denied".into())).boxed()
         }
@@ -661,7 +694,7 @@ mod tests {
             _: &'a str,
             _: &'a str,
             _: Vec<u8>,
-        ) -> BoxFuture<'a, Result<(), BoxError>> {
+        ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
             self.fail()
         }
 
@@ -669,7 +702,7 @@ mod tests {
             &'a self,
             _: &'a str,
             _: &'a str,
-        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+        ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
             self.fail()
         }
 
@@ -677,7 +710,7 @@ mod tests {
             &'a self,
             _: &'a str,
             _: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+        ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
             self.fail()
         }
 
@@ -708,7 +741,7 @@ mod tests {
             _: &'a str,
             _: &'a str,
             _: Vec<u8>,
-        ) -> BoxFuture<'a, Result<(), BoxError>> {
+        ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
             future::ready(Ok(())).boxed()
         }
 
@@ -716,7 +749,7 @@ mod tests {
             &'a self,
             _: &'a str,
             key: &'a str,
-        ) -> BoxFuture<'a, Result<bool, BoxError>> {
+        ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
             async move {
                 if key.ends_with(&self.failing_key_suffix) {
                     let _ = self.other_requests_started.acquire_many(2).await;
@@ -733,7 +766,7 @@ mod tests {
             &'a self,
             _: &'a str,
             _: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+        ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
             unimplemented!()
         }
     }
@@ -822,12 +855,21 @@ mod tests {
     }
 
     async fn store_key(target: Option<StorageDriverTargetInfo>, data: &str) -> String {
-        let driver = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FakeS3Client::default()), "my-bucket");
         let claims = driver
             .store(&store_context(target), vec![payload(data)])
             .await
             .unwrap();
         claims[0].claim_data[CLAIM_KEY].clone()
+    }
+
+    fn new_driver(client: Arc<dyn S3StorageDriverClient>, bucket: &str) -> S3StorageDriver {
+        S3StorageDriver::new(
+            S3StorageDriverOptions::builder()
+                .client(client)
+                .bucket(bucket)
+                .build(),
+        )
     }
 
     fn driver_error(err: StorageDriverError) -> S3StorageDriverError {
@@ -838,13 +880,13 @@ mod tests {
     fn default_name_is_aws_s3driver() {
         // Retrieval is routed by the name recorded in history, so this must stay identical across
         // SDKs. The literal is deliberate: a test against the constant would pass if it changed.
-        let driver = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "b");
+        let driver = new_driver(Arc::new(FakeS3Client::default()), "b");
         assert_eq!(driver.name(), "aws.s3driver");
     }
 
     #[tokio::test]
     async fn retrieve_of_stored_claims_returns_the_original_payloads() {
-        let driver = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FakeS3Client::default()), "my-bucket");
         let payloads = vec![payload("one"), payload("two")];
 
         let claims = driver
@@ -860,7 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_claim_holds_bucket_key_and_sha256_hash() {
-        let driver = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FakeS3Client::default()), "my-bucket");
 
         let claims = driver
             .store(&store_context(Some(my_workflow())), vec![payload("one")])
@@ -963,7 +1005,7 @@ mod tests {
     #[tokio::test]
     async fn store_same_payload_twice_in_one_call_uploads_once() {
         let client = Arc::new(FakeS3Client::default());
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
 
         let claims = driver
             .store(
@@ -986,7 +1028,7 @@ mod tests {
             ..Default::default()
         };
         let client = Arc::new(FakeS3Client::default());
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
 
         let claims = driver
             .store(&store_context(None), vec![equal_payload(), equal_payload()])
@@ -1004,7 +1046,7 @@ mod tests {
     #[tokio::test]
     async fn store_object_already_in_s3_skips_the_upload() {
         let client = Arc::new(FakeS3Client::default());
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
 
         for _ in 0..2 {
             driver
@@ -1019,9 +1061,14 @@ mod tests {
     #[tokio::test]
     async fn store_bucket_selector_chooses_the_bucket_for_each_payload() {
         let client = Arc::new(FakeS3Client::default());
-        let driver = S3StorageDriver::with_bucket_selector(client.clone(), |_, payload| {
-            format!("bucket-{}", String::from_utf8_lossy(&payload.data))
-        });
+        let driver = S3StorageDriver::new(
+            S3StorageDriverOptions::builder()
+                .client(client.clone())
+                .bucket(Bucket::selector(|_, payload| {
+                    format!("bucket-{}", String::from_utf8_lossy(&payload.data))
+                }))
+                .build(),
+        );
 
         let claims = driver
             .store(
@@ -1049,7 +1096,7 @@ mod tests {
 
     #[tokio::test]
     async fn each_s3_request_takes_one_limiter_permit() {
-        let driver = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FakeS3Client::default()), "my-bucket");
         let store_limiter = Arc::new(RecordingLimiter::new());
         let retrieve_limiter = Arc::new(RecordingLimiter::new());
 
@@ -1085,7 +1132,7 @@ mod tests {
             request_count: AtomicUsize::new(0),
             requests_without_permit_count: AtomicUsize::new(0),
         });
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
         let limiter = Arc::new(LivePermitCountingLimiter(live_permits));
 
         // One payload at a time, so another request's permit cannot hide a request made without one
@@ -1122,7 +1169,7 @@ mod tests {
             max_in_flight: AtomicUsize::new(0),
             request_count: AtomicUsize::new(0),
         });
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
         let context = store_context_with_limiter(
             None,
             Arc::new(SemaphoreLimiter(Arc::new(Semaphore::new(2)))),
@@ -1143,10 +1190,17 @@ mod tests {
     #[tokio::test]
     async fn store_payload_over_max_payload_size_fails_and_at_the_limit_succeeds() {
         let size = payload("one").encode_to_vec().len();
-        let at_limit = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "b")
-            .with_max_payload_size(NonZeroUsize::new(size).unwrap());
-        let below_limit = S3StorageDriver::new(Arc::new(FakeS3Client::default()), "b")
-            .with_max_payload_size(NonZeroUsize::new(size - 1).unwrap());
+        let driver_with_max = |max| {
+            S3StorageDriver::new(
+                S3StorageDriverOptions::builder()
+                    .client(Arc::new(FakeS3Client::default()))
+                    .bucket("b")
+                    .max_payload_size(NonZeroUsize::new(max).unwrap())
+                    .build(),
+            )
+        };
+        let at_limit = driver_with_max(size);
+        let below_limit = driver_with_max(size - 1);
 
         at_limit
             .store(&store_context(None), vec![payload("one")])
@@ -1164,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_s3_request_failure_reports_bucket_key_and_region() {
-        let driver = S3StorageDriver::new(Arc::new(FailingS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FailingS3Client::default()), "my-bucket");
 
         let err = driver
             .store(&store_context(None), vec![payload("one")])
@@ -1188,7 +1242,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_s3_request_failure_reports_bucket_key_and_region() {
-        let driver = S3StorageDriver::new(Arc::new(FailingS3Client::default()), "my-bucket");
+        let driver = new_driver(Arc::new(FailingS3Client::default()), "my-bucket");
 
         let err = driver
             .retrieve(&retrieve_context(), vec![valid_claim()])
@@ -1214,7 +1268,7 @@ mod tests {
             other_requests_started: Semaphore::new(0),
             canceled_count: canceled_count.clone(),
         };
-        let driver = S3StorageDriver::new(Arc::new(client), "my-bucket");
+        let driver = new_driver(Arc::new(client), "my-bucket");
 
         let err = driver
             .store(
@@ -1232,7 +1286,7 @@ mod tests {
     #[tokio::test]
     async fn retrieve_data_not_matching_claim_hash_fails() {
         let client = Arc::new(FakeS3Client::default());
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
         let claims = driver
             .store(&store_context(None), vec![payload("one")])
             .await
@@ -1259,7 +1313,7 @@ mod tests {
     #[tokio::test]
     async fn retrieve_incomplete_or_unsupported_claim_fails_before_any_s3_request() {
         let client = Arc::new(FailingS3Client::default());
-        let driver = S3StorageDriver::new(client.clone(), "my-bucket");
+        let driver = new_driver(client.clone(), "my-bucket");
         let invalid_claims = [
             claim(None, Some("my-key"), Some("sha256"), Some("abc")),
             claim(Some("my-bucket"), Some(""), Some("sha256"), Some("abc")),

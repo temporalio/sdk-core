@@ -1,7 +1,7 @@
-use crate::client::{BoxError, S3StorageDriverClient};
+use crate::client::S3StorageDriverClient;
 use aws_sdk_s3::{Client, primitives::ByteStream};
 use futures_util::future::BoxFuture;
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error};
 
 /// [`S3StorageDriverClient`] backed by an [`aws_sdk_s3::Client`] from the official AWS SDK.
 ///
@@ -24,7 +24,7 @@ impl S3StorageDriverClient for AwsSdkS3StorageDriverClient {
         bucket: &'a str,
         key: &'a str,
         data: Vec<u8>,
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
+    ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>> {
         Box::pin(async move {
             self.client
                 .put_object()
@@ -41,7 +41,7 @@ impl S3StorageDriverClient for AwsSdkS3StorageDriverClient {
         &'a self,
         bucket: &'a str,
         key: &'a str,
-    ) -> BoxFuture<'a, Result<bool, BoxError>> {
+    ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>> {
         Box::pin(async move {
             match self
                 .client
@@ -64,7 +64,7 @@ impl S3StorageDriverClient for AwsSdkS3StorageDriverClient {
         &'a self,
         bucket: &'a str,
         key: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>> {
+    ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>> {
         Box::pin(async move {
             let output = self
                 .client

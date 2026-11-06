@@ -15,16 +15,22 @@ depending on the AWS SDK, disable default features and implement `S3StorageDrive
 
 ```rust,ignore
 use std::sync::Arc;
-use temporalio_aws_s3driver::{AwsSdkS3StorageDriverClient, S3StorageDriver};
+use temporalio_aws_s3driver::{
+    AwsSdkS3StorageDriverClient, S3StorageDriver, S3StorageDriverOptions,
+};
 
 let config = aws_config::load_from_env().await;
 let driver = S3StorageDriver::new(
-    Arc::new(AwsSdkS3StorageDriverClient::new(aws_sdk_s3::Client::new(&config))),
-    "my-temporal-payloads",
+    S3StorageDriverOptions::builder()
+        .client(Arc::new(AwsSdkS3StorageDriverClient::new(
+            aws_sdk_s3::Client::new(&config),
+        )))
+        .bucket("my-temporal-payloads")
+        .build(),
 );
 ```
 
-To choose the bucket per payload, use `S3StorageDriver::with_bucket_selector`.
+To choose the bucket per payload, pass `Bucket::selector(|context, payload| ...)` as the bucket.
 
 ## Required IAM Permissions
 

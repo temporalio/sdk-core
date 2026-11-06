@@ -1,8 +1,5 @@
 use futures_util::future::BoxFuture;
-use std::collections::HashMap;
-
-/// Error returned by an [`S3StorageDriverClient`].
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+use std::{collections::HashMap, error::Error};
 
 /// S3 object operations used by [`S3StorageDriver`](crate::S3StorageDriver). Implement this to use
 /// an S3 library other than the AWS SDK.
@@ -15,21 +12,21 @@ pub trait S3StorageDriverClient: Send + Sync {
         bucket: &'a str,
         key: &'a str,
         data: Vec<u8>,
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
+    ) -> BoxFuture<'a, Result<(), Box<dyn Error + Send + Sync>>>;
 
     /// Check whether an object exists at the given bucket and key.
     fn object_exists<'a>(
         &'a self,
         bucket: &'a str,
         key: &'a str,
-    ) -> BoxFuture<'a, Result<bool, BoxError>>;
+    ) -> BoxFuture<'a, Result<bool, Box<dyn Error + Send + Sync>>>;
 
     /// Download the object at the given bucket and key.
     fn get_object<'a>(
         &'a self,
         bucket: &'a str,
         key: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<u8>, BoxError>>;
+    ) -> BoxFuture<'a, Result<Vec<u8>, Box<dyn Error + Send + Sync>>>;
 
     /// Client diagnostic information, such as the region, that the driver adds to error messages.
     fn describe(&self) -> HashMap<String, String> {

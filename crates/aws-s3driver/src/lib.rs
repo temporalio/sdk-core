@@ -17,5 +17,5 @@ mod driver;
 
 #[cfg(feature = "aws-sdk")]
 pub use aws_sdk_client::AwsSdkS3StorageDriverClient;
-pub use client::{BoxError, S3StorageDriverClient};
-pub use driver::{S3StorageDriver, S3StorageDriverError};
+pub use client::S3StorageDriverClient;
+pub use driver::{Bucket, S3StorageDriver, S3StorageDriverError, S3StorageDriverOptions};
