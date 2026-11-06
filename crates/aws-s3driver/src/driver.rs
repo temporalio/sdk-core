@@ -275,14 +275,14 @@ async fn upload_if_absent(
     let StoredObject {
         bucket, key, data, ..
     } = object;
-    let result: Result<(), BoxError> = async {
+    async {
         if !client.object_exists(&bucket, &key).await? {
             client.put_object(&bucket, &key, data).await?;
         }
         Ok(())
     }
-    .await;
-    result.map_err(|source| {
+    .await
+    .map_err(|source| {
         S3StorageDriverError::Store {
             client_context: client_context(client),
             bucket,
