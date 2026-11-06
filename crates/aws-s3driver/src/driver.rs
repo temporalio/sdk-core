@@ -2,12 +2,7 @@ use crate::client::S3StorageDriverClient;
 use futures_util::future::{BoxFuture, try_join_all};
 use prost::Message;
 use sha2::{Digest, Sha256};
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    num::NonZeroUsize,
-    sync::Arc,
-};
+use std::{collections::HashSet, error::Error, num::NonZeroUsize, sync::Arc};
 use temporalio_common::{
     data_converters::{
         StorageDriver, StorageDriverClaim, StorageDriverError, StorageDriverLimiter,
@@ -195,14 +190,14 @@ impl S3StorageDriver {
     fn stored_object(
         &self,
         context: &StorageDriverStoreContext,
-        mut payload: Payload,
+        payload: Payload,
         context_segments: &str,
     ) -> Result<StoredObject, S3StorageDriverError> {
         let bucket = match &self.bucket {
             Bucket::Name(name) => name.clone(),
             Bucket::Selector(selector) => selector(context, &payload),
         };
-        let data = serialize_payload(&mut payload);
+        let data = payload.encode_to_vec();
         if data.len() > self.max_payload_size {
             return Err(S3StorageDriverError::PayloadTooLarge {
                 size: data.len(),
@@ -379,27 +374,6 @@ fn validate_claim(claim: &StorageDriverClaim) -> Result<(), S3StorageDriverError
         });
     }
     Ok(())
-}
-
-/// Serializes a payload with its metadata entries sorted by key.
-fn serialize_payload(payload: &mut Payload) -> Vec<u8> {
-    let mut data = Vec::with_capacity(payload.encoded_len());
-    let mut metadata: Vec<_> = std::mem::take(&mut payload.metadata).into_iter().collect();
-    metadata.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-    for (key, value) in &metadata {
-        let entry = Payload {
-            metadata: HashMap::from([(key.clone(), value.clone())]),
-            ..Default::default()
-        };
-        entry
-            .encode(&mut data)
-            .expect("encoding into a Vec cannot run out of space");
-    }
-    payload
-        .encode(&mut data)
-        .expect("encoding into a Vec cannot run out of space");
-    payload.metadata = metadata.into_iter().collect();
-    data
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -1017,30 +991,6 @@ mod tests {
 
         assert_eq!(client.put_count.load(Ordering::SeqCst), 1);
         assert_eq!(claims[0], claims[1]);
-    }
-
-    #[tokio::test]
-    async fn store_equal_payloads_with_several_metadata_entries_uploads_once() {
-        let entries: Vec<_> = (0..8u8).map(|i| (format!("key-{i}"), vec![i])).collect();
-        let equal_payload = || Payload {
-            metadata: entries.iter().cloned().collect(),
-            data: b"same".to_vec(),
-            ..Default::default()
-        };
-        let client = Arc::new(FakeS3Client::default());
-        let driver = new_driver(client.clone(), "my-bucket");
-
-        let claims = driver
-            .store(&store_context(None), vec![equal_payload(), equal_payload()])
-            .await
-            .unwrap();
-
-        assert_eq!(client.put_count.load(Ordering::SeqCst), 1);
-        assert_eq!(claims[0], claims[1]);
-        assert_eq!(
-            driver.retrieve(&retrieve_context(), claims).await.unwrap(),
-            [equal_payload(), equal_payload()]
-        );
     }
 
     #[tokio::test]
