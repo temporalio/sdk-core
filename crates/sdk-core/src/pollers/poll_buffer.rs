@@ -108,7 +108,7 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
 pub(crate) struct PollerHeartbeatState {
     /// When the pool last polled successfully.
     pub(crate) last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    /// The pool's current scaling target. `None` for a fixed-size pool.
+    /// The pool's poller target. `None` until the pool exists.
     pub(crate) target: Arc<AtomicCell<Option<i32>>>,
 }
 
@@ -425,7 +425,7 @@ where
                         } else {
                             None
                         };
-                    let target_pollers = report_handle.reportable_target();
+                    let target_pollers = Some(report_handle.target_pollers());
                     let capabilities = capabilities.clone();
                     let poll_task = tokio::spawn(async move {
                         let r = if capabilities.graceful_poll_shutdown() {
@@ -647,12 +647,9 @@ struct PollScalerReportHandle {
 }
 
 impl PollScalerReportHandle {
-    /// The pool's current scaling target. `None` for a fixed-size pool.
-    fn reportable_target(&self) -> Option<i32> {
-        if !self.behavior.is_autoscaling() {
-            return None;
-        }
-        Some((*self.target.borrow()).try_into().unwrap_or(i32::MAX))
+    /// The pool's poller target: the autoscaled target, or the configured size if fixed.
+    fn target_pollers(&self) -> i32 {
+        (*self.target.borrow()).try_into().unwrap_or(i32::MAX)
     }
 
     /// Returns (should_forward, backoff_duration)
@@ -768,7 +765,9 @@ impl PollScalerReportHandle {
 
     /// Mirrors the current target into the cell the heartbeat reads.
     fn publish_target(&self) {
-        self.heartbeat_state.target.store(self.reportable_target());
+        self.heartbeat_state
+            .target
+            .store(Some(self.target_pollers()));
     }
 
     /// We want to avoid scaling down on empty polls if the server has never made any scaling
@@ -947,6 +946,91 @@ mod tests {
         // Now we grab the buffered poll response, the poll task will go again but we don't grab it,
         // therefore we will have only polled twice.
         pb.poll().await.unwrap().unwrap();
+        pb.shutdown().await;
+    }
+
+    #[rstest]
+    #[case::fixed(PollerBehavior::SimpleMaximum(5), 5)]
+    #[case::autoscaling(
+        PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 10,
+            initial: 3,
+        },
+        3
+    )]
+    #[tokio::test]
+    async fn poll_request_reports_target_pollers(
+        #[case] behavior: PollerBehavior,
+        #[case] expected: i32,
+    ) {
+        let seen_target = Arc::new(AtomicCell::new(None));
+        let seen_target_clone = seen_target.clone();
+        let mut mock_client = mock_manual_worker_client();
+        mock_client
+            .expect_poll_workflow_task()
+            .returning(move |opts, _| {
+                seen_target_clone.store(opts.target_pollers);
+                async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(Default::default())
+                }
+                .boxed()
+            });
+
+        let pb = LongPollBuffer::new_workflow_task(
+            Arc::new(mock_client),
+            "sometq".to_string(),
+            None,
+            behavior,
+            fixed_size_permit_dealer(10),
+            CancellationToken::new(),
+            None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: None,
+            },
+            PollerHeartbeatState::default(),
+            Arc::new(NamespaceCapabilities::default()),
+        );
+
+        pb.poll().await.unwrap().unwrap();
+        pb.shutdown().await;
+
+        assert_eq!(seen_target.load(), Some(expected));
+    }
+
+    #[rstest]
+    #[case::fixed(PollerBehavior::SimpleMaximum(5), 5)]
+    #[case::autoscaling(
+        PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 10,
+            initial: 3,
+        },
+        3
+    )]
+    #[tokio::test]
+    async fn heartbeat_target_is_populated(
+        #[case] behavior: PollerBehavior,
+        #[case] expected: i32,
+    ) {
+        let heartbeat_state = PollerHeartbeatState::default();
+        let pb = LongPollBuffer::new_workflow_task(
+            Arc::new(mock_manual_worker_client()),
+            "sometq".to_string(),
+            None,
+            behavior,
+            fixed_size_permit_dealer(10),
+            CancellationToken::new(),
+            None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: None,
+            },
+            heartbeat_state.clone(),
+            Arc::new(NamespaceCapabilities::default()),
+        );
+
+        assert_eq!(heartbeat_state.target.load(), Some(expected));
         pb.shutdown().await;
     }
 
