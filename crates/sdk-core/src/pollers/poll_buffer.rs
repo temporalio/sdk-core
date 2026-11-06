@@ -103,13 +103,15 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
 }
 
 /// Per-poller-type state the poll scaler publishes for the worker heartbeat, which is built
-/// before any poller exists.
-#[derive(Clone, Default)]
-pub(crate) struct PollerHeartbeatState {
+/// before any poller exists. Shared, so the heartbeat and the pool see the same cells.
+pub(crate) type PollerHeartbeatState = Arc<PollerHeartbeatStateInner>;
+
+#[derive(Default)]
+pub(crate) struct PollerHeartbeatStateInner {
     /// When the pool last polled successfully.
-    pub(crate) last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    pub(crate) last_successful_poll_time: AtomicCell<Option<SystemTime>>,
     /// The pool's poller target. `None` until the pool exists.
-    pub(crate) target: Arc<AtomicCell<Option<i32>>>,
+    pub(crate) target: AtomicCell<Option<i32>>,
 }
 
 pub(crate) struct WorkflowTaskOptions {
