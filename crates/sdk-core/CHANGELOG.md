@@ -89,6 +89,10 @@ relevant information.
   make progress after unpause.
 
 ### Added
+* Client environment config profiles include the raw TOML tables under `profile.<name>.ext`,
+  keyed by extension name, for SDK envconfig extensions. Strict mode accepts any content under
+  `ext`. The C bridge's profile JSON includes them as an `ext` object, with TOML datetimes as
+  strings.
 * The C bridge's shared dev and test server options accept a startup timeout in milliseconds,
   with zero selecting the five-second default.
 * The OTLP metrics exporter can export histograms as OpenTelemetry exponential histograms, which
