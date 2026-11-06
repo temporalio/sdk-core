@@ -2063,6 +2063,9 @@ message PollNexusTaskQueueRequest {
 
     // Worker info to be sent to the server.
     repeated temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
+
+    // Worker-reported poller pool state. Optional.
+    temporal.api.taskqueue.v1.PollerPoolInfo poller_pool_info = 10;
 }
 
 message PollNexusTaskQueueResponse {

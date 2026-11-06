@@ -592,6 +592,9 @@ impl WorkerClient for WorkerClientBag {
             worker_heartbeat: Vec::new(),
             worker_instance_key: self.worker_instance_key.to_string(),
             poller_group_id: Default::default(),
+            poller_pool_info: poll_options
+                .target_pollers
+                .map(|target_pollers| PollerPoolInfo { target_pollers }),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
