@@ -7,8 +7,11 @@
 //! makes each call from a Local Activity.
 
 mod error;
+mod runtime;
+pub mod store;
 
 pub use error::{Reason, StreamError, StreamResult};
+pub use runtime::{MemoryStreamRuntime, StoreFactory, StreamRuntime};
 
 /// The protos that lang and the crate exchange. `temporalio-protos` generates them, so a value
 /// needs no conversion between the crates.

@@ -10,6 +10,19 @@ import "temporal/api/stream/v1/message.proto";
 // Lang sends them through the bridge's call on the runtime object, by the method name in each
 // comment. One generic call keeps Stream logic out of every bridge.
 
+// The settings of the memory Stream runtime, for tests. Each field has the number of the same
+// field in the config of the other Stores, such as Redis, so a backend can send that config here
+// too.
+message MemoryStreamConfig {
+    // The default Retention of a new Stream. Empty is 7 days.
+    google.protobuf.Duration retention = 4;
+    // How long an open Workflow-owned Stream stays after its last write. Empty is 90 days.
+    google.protobuf.Duration safety_ttl = 5;
+    // The backend name that lang registered this runtime under. The runtime sets it on each
+    // StreamRef that it builds, such as the one in a create response.
+    string backend = 10;
+}
+
 // Method `OpenWriter`, asynchronous. A writer for an Activity, a Local Activity or a client
 // Producer, which keeps its epoch and `sequence` order. A writer of a Local Activity, or of an
 // Activity attempt above 1, first sends an empty batch, so that the new epoch withdraws the earlier
