@@ -758,7 +758,9 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                         attrs: RequestCancelExternalWorkflowExecutionCommandAttributes {
                             namespace: self.shared_state.namespace.clone(),
                             workflow_id: self.shared_state.workflow_id.clone(),
-                            run_id: self.shared_state.run_id.clone(),
+                            // The started event's run id goes stale once the child continues
+                            // as new; an empty run id targets its current run.
+                            run_id: String::new(),
                             child_workflow_only: true,
                             reason,
                             ..Default::default()

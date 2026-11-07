@@ -70,6 +70,10 @@ relevant information.
   for a cache slot.
 * Rejection-only update tasks no longer dispatch local activities resumed from replay before
   validation, allowing those tasks to remain unrecorded in workflow history.
+* Cancelling a child workflow now reaches the child's current run after it has continued as new.
+  Core no longer pins the cancel request to the run id recorded when the child started, which the
+  server silently dropped once that run had closed, leaving the child running and a
+  `WAIT_CANCELLATION_COMPLETED` parent waiting for its natural completion.
 * Preparing a legacy query now remains in replay mode, preventing unrecorded local activity
   attempts that could execute twice or leave the workflow stuck.
 * Worker heartbeats now report correct task-slot and poller counts when using buffered or custom

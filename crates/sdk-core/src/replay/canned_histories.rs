@@ -1256,8 +1256,10 @@ pub fn single_child_workflow_signaled(child_wf_id: &str, signame: &str) -> TestH
 /// 16: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_child_workflow_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
     let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
+    // Histories recorded before core stopped pinning the child's run id carry it here.
     let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
         workflow_id: child_wf_id.to_string(),
+        run_id: "child-run-id".to_string(),
         ..Default::default()
     });
     t.add_cancel_external_wf_completed(id);

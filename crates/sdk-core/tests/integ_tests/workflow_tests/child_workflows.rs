@@ -33,8 +33,9 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ApplicationFailure, CancellableFuture, ChildWorkflowCancellationType,
-    ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowStartError, ParentClosePolicy,
-    SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowSignalError, WorkflowTermination,
+    ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowStartError,
+    ContinueAsNewOptions, ParentClosePolicy, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    WorkflowSignalError, WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
@@ -571,6 +572,100 @@ impl GrandchildCancelled {
         ctx.cancelled().await;
         Err(WorkflowTermination::cancelled())
     }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ContinuedAsNewChild;
+
+#[workflow_methods]
+impl ContinuedAsNewChild {
+    #[run(name = "continued_as_new_child")]
+    async fn run(ctx: &mut WorkflowContext<Self>, continued: bool) -> WorkflowResult<()> {
+        if !continued {
+            ctx.continue_as_new(true, ContinueAsNewOptions::default())?;
+        }
+        let parent_id = ctx.info().parent().unwrap().workflow_id().to_string();
+        ctx.external_workflow(parent_id, None)
+            .signal(
+                CancelsChildAfterContinueAsNewWf::child_continued,
+                (),
+                Default::default(),
+            )
+            .await?;
+        // Bound the run so a cancel that never reaches it fails the parent's assertion instead of
+        // hanging the test.
+        temporalio_sdk::workflows::select! {
+            _ = ctx.cancelled() => Err(WorkflowTermination::cancelled()),
+            _ = ctx.timer(Duration::from_secs(5)) => Ok(()),
+        }
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancelsChildAfterContinueAsNewWf {
+    child_continued: bool,
+}
+
+#[workflow_methods]
+impl CancelsChildAfterContinueAsNewWf {
+    #[run(name = "cancels_child_after_continue_as_new")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .start_child_workflow(
+                ContinuedAsNewChild::run,
+                false,
+                ChildWorkflowOptions::builder()
+                    .workflow_id(format!("{}-continued-child", ctx.task_queue()))
+                    .cancel_type(ChildWorkflowCancellationType::WaitCancellationCompleted)
+                    .build(),
+            )
+            .await
+            .expect("child should start");
+        ctx.wait_condition(|s| s.child_continued).await?;
+        started.cancel("child cancel".to_string());
+        let Err(ChildWorkflowExecutionError::Failed(failure)) = started.result().await else {
+            return Err(
+                ApplicationFailure::new("child completed instead of being cancelled").into(),
+            );
+        };
+        if failure.as_cancelled().is_none() {
+            return Err(ApplicationFailure::new("child failed but was not cancelled").into());
+        }
+        Ok(())
+    }
+
+    #[signal]
+    fn child_continued(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
+        self.child_continued = true;
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_workflow_after_continue_as_new() {
+    let mut starter = CoreWfStarter::new("cancel-child-workflow-after-continue-as-new");
+    starter
+        .sdk_config
+        .register_workflow::<CancelsChildAfterContinueAsNewWf>()
+        .unwrap();
+    starter
+        .sdk_config
+        .register_workflow::<ContinuedAsNewChild>()
+        .unwrap();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            CancelsChildAfterContinueAsNewWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[workflow]

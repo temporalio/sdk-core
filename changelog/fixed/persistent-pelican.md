@@ -1,0 +1,1 @@
+Cancelling a started child workflow now reaches the child's current run after it has continued as new. The cancel request was pinned to the run id the child started with, so once that run had closed the server dropped it, and a `WaitCancellationCompleted` parent waited for the child to finish on its own.
