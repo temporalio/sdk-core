@@ -1384,6 +1384,9 @@ pub mod coresdk {
     pub mod child_workflow {
         tonic::include_proto!("coresdk.child_workflow");
     }
+    pub mod streams {
+        tonic::include_proto!("coresdk.streams");
+    }
     pub mod nexus {
         tonic::include_proto!("coresdk.nexus");
         pub use self::sdk_helpers::*;
@@ -2617,6 +2620,16 @@ pub mod temporal {
         pub mod sdk {
             pub mod v1 {
                 include_proto_with_serde!("temporal.api.sdk.v1");
+            }
+        }
+        pub mod stream {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.stream.v1");
+            }
+        }
+        pub mod streamservice {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.streamservice.v1");
             }
         }
         pub mod taskqueue {
