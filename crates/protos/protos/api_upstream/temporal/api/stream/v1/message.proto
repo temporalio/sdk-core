@@ -30,27 +30,6 @@ message StreamRef {
 }
 
 // Experimental. Might change in the future.
-// The ordered attempt of a Producer. A higher epoch supersedes the Records of a lower epoch of the
-// same Producer. The case is the kind of the Producer. It decides how the Store orders the epochs,
-// and which earlier Records a higher epoch withdraws.
-message ProducerEpoch {
-    oneof kind {
-        // A Workflow run, which writes in its Workflow Task. A higher epoch withdraws the Records
-        // of the run's Workflow Tasks that never completed, also those of their Local Activities.
-        WorkflowTaskEpoch workflow = 1;
-        // A Local Activity. A higher epoch withdraws the Producer's lower epochs.
-        LocalActivityEpoch local_activity = 2;
-        // An Activity of a Workflow. A higher epoch withdraws the Producer's lower epochs.
-        ActivityEpoch activity = 3;
-        // A Standalone Activity. A higher epoch withdraws the Producer's lower epochs.
-        ActivityEpoch standalone_activity = 4;
-        // A client. A higher epoch only fences the lower ones, since a restarted client's earlier
-        // Records are real messages, not the Records of a failed attempt.
-        ClientEpoch client = 5;
-    }
-}
-
-// Experimental. Might change in the future.
 // One Workflow Task attempt of a run. It orders by started_event_id, then attempt, then
 // started_time.
 message WorkflowTaskEpoch {
@@ -86,32 +65,78 @@ message ClientEpoch {
 }
 
 // Experimental. Might change in the future.
-// The code that wrote a batch. Its id stays the same across attempts, and its epoch orders them.
+// A Workflow run Producer. It writes in its Workflow Task. A higher epoch withdraws the Records of
+// the run's Workflow Tasks that never completed, with those of their Local Activities.
+message WorkflowProducer {
+    // The first execution run id of the run chain.
+    string run_id = 1;
+    WorkflowTaskEpoch epoch = 2;
+}
+
+// Experimental. Might change in the future.
+// A Local Activity Producer. A higher epoch withdraws the Producer's lower epochs.
+message LocalActivityProducer {
+    string run_id = 1;
+    LocalActivityEpoch epoch = 2;
+}
+
+// Experimental. Might change in the future.
+// An Activity Producer, for an Activity of a Workflow or a Standalone Activity. A higher epoch
+// withdraws the Producer's lower epochs.
+message ActivityProducer {
+    string run_id = 1;
+    ActivityEpoch epoch = 2;
+}
+
+// Experimental. Might change in the future.
+// A client Producer. A higher epoch only fences the lower ones, since a restarted client's earlier
+// Records are real messages, not the Records of a failed attempt. A client has no run.
+message ClientProducer {
+    ClientEpoch epoch = 1;
+}
+
+// Experimental. Might change in the future.
+// The code that wrote a batch. Its id stays the same across attempts, and the kind's case orders
+// its epochs and picks which earlier Records a higher epoch withdraws. A run-based kind carries its
+// run, so a client can't.
 message Producer {
     // Stable across attempts, such as `wf:<run id>` for the Workflow Producer of a run.
     string id = 1;
-    // Required. Its case gives the kind of the Producer.
-    ProducerEpoch epoch = 2;
-    // The run of the Producer, so nobody parses the id. Empty for a client.
-    string run_id = 3;
+    // Required. The case is the kind of the Producer.
+    oneof kind {
+        WorkflowProducer workflow = 2;
+        LocalActivityProducer local_activity = 3;
+        ActivityProducer activity = 4;
+        ActivityProducer standalone_activity = 5;
+        ClientProducer client = 6;
+    }
 }
 
 // Experimental. Might change in the future.
 // The Producer of a write, and which earlier Records the write withdraws. An append, a close and
 // a writer carry the same fields, so the Store orders and withdraws each write the same way.
 message StreamWriter {
-    // Required on a write. Its epoch's case picks the withdrawal rule.
+    // Required on a write. Its Producer's kind picks the withdrawal rule.
     Producer producer = 1;
-    // Workflow and Local Activity only. The run's last completed Workflow Task, from a Local
-    // Activity's start. Its started_event_id is 0 before the first. The write withdraws the run's
-    // Local Activity Records whose Workflow Task never completed.
-    WorkflowTaskEpoch previous_completed_task = 2;
-    // Workflow and Local Activity only. The started event ids of the run's failed or timed out
-    // Workflow Tasks. The write withdraws the run's Local Activity Records of these tasks.
-    repeated int64 failed_tasks = 3;
-    // Retry run only. The previous run, on the retry run's first write. Every Record whose
-    // Producer carries it is withdrawn.
-    string withdraw_run = 4;
+    // Set only by a Workflow or Local Activity write, since only a run withdraws orphaned Local
+    // Activity Records or a previous run. Unset for an Activity or client write.
+    RunWithdrawal withdrawal = 2;
+}
+
+// Experimental. Might change in the future.
+// What a Workflow or Local Activity write withdraws from its run. One write can carry both the task
+// facts and a run to withdraw, so these are fields of one message and not a oneof.
+message RunWithdrawal {
+    // The run's last completed Workflow Task, from a Local Activity's start. Its started_event_id
+    // is 0 before the first. The write withdraws the run's Local Activity Records whose Workflow
+    // Task never completed.
+    WorkflowTaskEpoch previous_completed_task = 1;
+    // The started event ids of the run's failed or timed out Workflow Tasks. The write withdraws
+    // the run's Local Activity Records of these tasks.
+    repeated int64 failed_tasks = 2;
+    // Retry run only. The previous run, on the retry run's first write. Every Record whose Producer
+    // carries it is withdrawn.
+    string withdraw_run = 3;
 }
 
 // Experimental. Might change in the future.
@@ -125,8 +150,7 @@ message AppendRecord {
 // batch of a higher epoch, or for a retry run's first write, and a read builds a Superseded item
 // from them. A reader drops the earlier Records that the facts match.
 message StreamSuperseded {
-    // The writer of the batch that withdraws. Its Producer's epoch is empty when only
-    // withdraw_run applies.
+    // The writer of the batch that withdraws, with its withdrawal facts.
     StreamWriter writer = 1;
 }
 

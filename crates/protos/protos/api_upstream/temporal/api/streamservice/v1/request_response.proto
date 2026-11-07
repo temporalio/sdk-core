@@ -75,7 +75,7 @@ message AppendRecordsRequest {
     int64 sequence = 4;
     repeated temporal.api.stream.v1.AppendRecord records = 5;
     // Only read by the server, on a Workflow Producer's batch. The batch withdraws no Workflow
-    // Task and keeps no task facts, but the writer's withdraw_run still applies.
+    // Task and keeps no task facts, but the writer's withdrawal withdraw_run still applies.
     bool defer_withdrawal = 6;
     // Only read by the server. The server checks the Producer against the Activity's current
     // attempt, so nobody else writes as that Activity.
